@@ -1,0 +1,7 @@
+*.swp
+
+venv/
+
+models/*
+
+test_data/
