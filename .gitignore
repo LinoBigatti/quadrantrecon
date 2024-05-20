@@ -1,7 +1,11 @@
 *.swp
 
 venv/
+build/
+dist/
 
 models/*
 
 test_data/
+
+*.pth
