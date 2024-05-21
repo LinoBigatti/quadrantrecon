@@ -1,13 +1,18 @@
 import sys
 import argparse
-import numpy as np
+from itertools import islice, chain
+
 import torch
+from segment_anything import SamPredictor, sam_model_registry
+
+import cv2
+import numpy as np
+
 import matplotlib
 import matplotlib.pyplot as plt
-import cv2
-import pyexiv2
-from segment_anything import SamPredictor, sam_model_registry
-from itertools import islice, chain
+
+import piexif 
+import piexif.helper
 
 class QuadrantRecon:
     def show_mask(self, mask, ax, random_color=False):
@@ -116,13 +121,17 @@ class QuadrantRecon:
             self.process_image(filename, predictor)
 
     def process_image(self, filename: str, predictor: SamPredictor):
-        metadata = pyexiv2.ImageMetadata(filename)
-        metadata.read()
+        metadata = piexif.load(filename)
 
-        if metadata['Exif.Photo.UserComment'].raw_value == "_quadrantrecon_marker":
-            print("ERROR: This image has already been modified by quadrantrecon.")
+        try:
+            user_comment = piexif.helper.UserComment.load(metadata["Exif"][piexif.ExifIFD.UserComment])
 
-            return
+            if user_comment == "_quadrantrecon_marker":
+                print(f"Skipping {filename}: This image has already been modified by quadrantrecon.")
+
+                return
+        except ValueError:
+            pass
 
         self.log(f"Loading image from path ${filename}...")
         image = cv2.imread(filename)
@@ -204,21 +213,16 @@ class QuadrantRecon:
 
         cv2.imwrite(new_filename, image_cropped);
 
-        _metadata = pyexiv2.ImageMetadata(new_filename)
-        _metadata.read()
-
         self.log("Writing metadata...")
-        try:
-            metadata['Exif.Image.XResolution'] = _metadata['Exif.Image.XResolution']
-            metadata['Exif.Image.YResolution'] = _metadata['Exif.Image.YResolution']
-        except:
-            # The tags didnt exist
-            pass
 
-        metadata['Exif.Photo.UserComment'] = pyexiv2.ExifTag("Exif.Photo.UserComment", "_quadrantrecon_marker")
+        metadata["0th"][piexif.ImageIFD.XResolution] = (self.width, 1)
+        metadata["0th"][piexif.ImageIFD.YResolution] = (self.height, 1)
 
-        metadata.copy(_metadata)
-        _metadata.write();
+        user_comment = piexif.helper.UserComment.dump(u"_quadrantrecon_marker")
+        metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
+
+        exif_bytes = piexif.dump(metadata)
+        piexif.insert(exif_bytes, new_filename)
 
 
 if __name__ == "__main__":
