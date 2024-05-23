@@ -40,66 +40,43 @@ class QuadrantRecon:
             print(message)
 
     def get_inner_bb(self, mask):
-        # We build a version with the axes flipped to prevent an O(n2) situation in the second loop 
-        flipped_mask = np.swapaxes(mask, 0, 1)
+        neighborhood_size = 40
 
-        start_y = -1
-        end_y = -1
-        
-        prev_had_mask = False
-        for i, row in enumerate(mask):
-            has_mask = sum(row) > 500
-            
-            if not has_mask and prev_had_mask and start_y == -1:
-                start_y = i
-            
-            if has_mask and not prev_had_mask and start_y != -1:
-                if end_y == 0:
-                    end_y = i - 1
-                elif end_y == -1:
-                    end_y += 1
+        # Apply corner detection
+        mask = mask.astype(np.float32)
+        corners = cv2.cornerHarris(mask, neighborhood_size, 3, 0.05)
 
-            prev_had_mask = has_mask
-        
-        start_x = -1
-        end_x = -1
+        # Use a threshold
+        # Only detection points with 70%+ probability of being a corner are counted
+        threshold = 0.7 * corners.max()
 
-        prev_had_mask = False
-        for i, col in enumerate(flipped_mask):
-            has_mask = sum(col) > 700
+        corners[corners > threshold] = 1.0
+        corners[corners < threshold] = 0.0
 
-            if not has_mask and prev_had_mask and start_x == -1:
-                start_x = i
+        if self.plot and self.verbose:
+            self.log("Plotting detected corners...")
 
-            if has_mask and not prev_had_mask and start_x != -1 and end_x == -1:
-                end_x = i - 1
+            plt.figure(figsize=(10, 10))
+            plt.imshow(corners)
 
-            prev_had_mask = has_mask
+            plt.axis("off")
+            plt.show()
 
-        cropped_mask = [list(islice(row, start_x, end_x)) for row in islice(mask, start_y, end_y)]
-        flipped_cropped_mask = np.swapaxes(cropped_mask, 0, 1)
-        
-        bb_x = 0
-        bb_y = 0
-        
-        done = False
-        while not done:
-            done = True
+        x = None
+        y = None
 
-            # Check row
-            if True in cropped_mask[bb_y][bb_x:bb_x+self.width]:
-                bb_y += 1
-                
-                done = False
+        for (_y, row) in enumerate(corners):
+            for (_x, px) in enumerate(row[:len(row) // 2]):
+                if px == 1.0:
+                    # x and y detected points are centered, but we actually want
+                    # the top left corner
+                    # Also, we add a bit of clearance so we dont get corner pixels in
+                    x = _x - neighborhood_size // 2 + 5
+                    y = _y - neighborhood_size // 2 + 10
 
-            # Check column
-            if True in flipped_cropped_mask[bb_x][bb_y:bb_y+self.height]:
-                bb_x += 1
-
-                done = False
-
-        x = start_x + bb_x
-        y = start_y + bb_y
+                    break
+            if x:
+                break
 
         return [x, y, x + self.width, y + self.height] 
 
