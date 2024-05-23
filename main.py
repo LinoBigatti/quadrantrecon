@@ -2,6 +2,8 @@ import sys
 import argparse
 from itertools import islice, chain
 
+sys.path.append("sam/")
+
 import torch
 from segment_anything import SamPredictor, sam_model_registry
 
