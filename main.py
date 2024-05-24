@@ -186,22 +186,23 @@ class QuadrantRecon:
             plt.show()
 
         # Save image
-        self.log("Saving modified image...");
-        
-        new_filename = filename[:-4] + "_cropped.JPG"
-
-        cv2.imwrite(new_filename, image_cropped);
-
-        self.log("Writing metadata...")
-
-        metadata["0th"][piexif.ImageIFD.XResolution] = (self.width, 1)
-        metadata["0th"][piexif.ImageIFD.YResolution] = (self.height, 1)
-
-        user_comment = piexif.helper.UserComment.dump(u"_quadrantrecon_marker")
-        metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
-
-        exif_bytes = piexif.dump(metadata)
-        piexif.insert(exif_bytes, new_filename)
+        if not self.dry_run:
+            self.log("Saving modified image...");
+            
+            new_filename = filename[:-4] + "_cropped.JPG"
+    
+            cv2.imwrite(new_filename, image_cropped);
+    
+            self.log("Writing metadata...")
+    
+            metadata["0th"][piexif.ImageIFD.XResolution] = (self.width, 1)
+            metadata["0th"][piexif.ImageIFD.YResolution] = (self.height, 1)
+    
+            user_comment = piexif.helper.UserComment.dump(u"_quadrantrecon_marker")
+            metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
+    
+            exif_bytes = piexif.dump(metadata)
+            piexif.insert(exif_bytes, new_filename)
 
 
 if __name__ == "__main__":
@@ -218,6 +219,9 @@ if __name__ == "__main__":
                         action="store_true")
     parser.add_argument("-p", "--plot",
                         help="plot results while working",
+                        action="store_true")
+    parser.add_argument("--dry-run",
+                        help="edit the image, but dont save the results",
                         action="store_true")
     parser.add_argument("-d", "--device",
                         help="device to run on (default: %(default)s)",
