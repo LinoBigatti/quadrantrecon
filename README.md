@@ -50,7 +50,8 @@ To finish up, we need to install the other python dependencies:
 pip install -r requirements.txt
 
 # Windows
-py -m pip install -r requirements.txt```
+py -m pip install -r requirements.txt
+```
 
 ### Running
 
