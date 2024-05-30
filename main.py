@@ -256,45 +256,6 @@ parser.add_argument("--height",
                     default=1790)
 
 if __name__ == "__main__":
-<<<<<<< HEAD
-    parser = argparse.ArgumentParser(
-        prog="QuadrantRecon",
-        description="Finds and crops out quadrants in images",
-    )
-
-    parser.add_argument("filename",
-                        help="one of the images to crop",
-                        nargs="+")
-    parser.add_argument("-v", "--verbose",
-                        help="display debug information",
-                        action="store_true")
-    parser.add_argument("-p", "--plot",
-                        help="plot results while working",
-                        action="store_true")
-    parser.add_argument("--dry-run",
-                        help="edit the image, but dont save the results",
-                        action="store_true")
-    parser.add_argument("-d", "--device",
-                        help="device to run on (default: %(default)s)",
-                        default="cuda")
-    parser.add_argument("--width",
-                        help="width of the cropped area, in pixels (default: %(default)ipx)",
-                        type=int,
-                        default=1790)
-    parser.add_argument("--height",
-                        help="height of the cropped area, in pixels (default: %(default)ipx)",
-                        type=int,
-                        default=1790)
-    parser.add_argument("--model-path",
-                        help="path to the segment anything model (default: %(default)s)",
-                        default="sam_vit_h.pth")
-    parser.add_argument("--model-type",
-                        help="type of sam model that is being loaded (default: %(default)s)",
-                        default="vit_h")
-
-
-=======
->>>>>>> 5e57a41 (Add a notebook example.)
     qr = QuadrantRecon()
     parser.parse_args(namespace=qr)
 
