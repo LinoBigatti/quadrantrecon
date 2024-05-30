@@ -1,6 +1,7 @@
 import sys
 import argparse
 from itertools import islice, chain
+from math import sqrt
 
 sys.path.append("sam/")
 
@@ -41,48 +42,50 @@ class QuadrantRecon:
         if self.verbose:
             print(message)
 
-    def get_inner_bb(self, mask):
-        neighborhood_size = 40
+    def get_inner_bb(self, mask, img):
+        # Detect contours in object mask
+        _mask = np.uint8(mask * 255)
+        contours, _hierarchy = cv2.findContours(_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
 
-        # Apply corner detection
-        mask = mask.astype(np.float32)
-        corners = cv2.cornerHarris(mask, neighborhood_size, 3, 0.05)
+        # Sort contours by area. Largest area is gonna be the outer contour, and second largest is gonna be the inner contour.
+        cnts = sorted(contours, key=cv2.contourArea, reverse=True)
 
-        # Use a threshold
-        # Only detection points with 70%+ probability of being a corner are counted
-        threshold = 0.7 * corners.max()
-
-        corners[corners > threshold] = 1.0
-        corners[corners < threshold] = 0.0
-
+        # Get closest point to top left corner in inner contour
+        min_dist = 100000000
+        min_dist_point = None
+        for point in cnts[1]:
+            point = point[0]
+        
+            dist = sqrt(point[0] ** 2 + point[1] ** 2)
+            
+            if dist < min_dist:
+                min_dist = dist
+                min_dist_point = point
+        
         if self.plot and self.verbose:
-            self.log("Plotting detected corners...")
+            self.log("Plotting detected corners and inner contour...")
 
             plt.figure(figsize=(10, 10))
-            plt.imshow(corners)
+
+            cv2.drawContours(img, cnts, 1, (255, 0, 0), 3)
+            cv2.circle(img, min_dist_point, 3, (0, 255, 0), 10)
+
+            plt.imshow(img)
 
             plt.axis("off")
             plt.show()
 
-        x = None
-        y = None
-
-        for (_y, row) in enumerate(corners):
-            for (_x, px) in enumerate(row[:len(row) // 2]):
-                if px == 1.0:
-                    # x and y detected points are centered, but we actually want
-                    # the top left corner
-                    # Also, we add a bit of clearance so we dont get corner pixels in
-                    x = _x - neighborhood_size // 2 + 5
-                    y = _y - neighborhood_size // 2 + 10
-
-                    break
-            if x:
-                break
-
+        x, y = min_dist_point
+        
         return [x, y, x + self.width, y + self.height] 
 
     def main(self):
+        self.create_predictor()
+        
+        for filename in self.filename:
+            self.process_image(filename)
+
+    def create_predictor(self):
         if self.plot:
             matplotlib.use('TKagg')
 
@@ -94,12 +97,14 @@ class QuadrantRecon:
         self.log("Model loaded.")
         
         self.log("Creating predictor...")
-        predictor = SamPredictor(sam)
+        self.predictor = SamPredictor(sam)
 
-        for filename in self.filename:
-            self.process_image(filename, predictor)
+    def process_image(self, filename: str):
+        if not self.predictor:
+            print("ERROR: Must load a predictor using load_predictor() first.")
 
-    def process_image(self, filename: str, predictor: SamPredictor):
+            exit()
+        
         metadata = piexif.load(filename)
 
         try:
@@ -112,18 +117,25 @@ class QuadrantRecon:
         except ValueError:
             pass
 
-        self.log(f"Loading image from path ${filename}...")
+        self.log(f"Loading image from path {filename}...")
         image = cv2.imread(filename)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
+        
         self.log("Image loaded.")
 
         self.log("Setting predictor image...")
-        predictor.set_image(image)
+        self.predictor.set_image(image)
         self.log("Predictor loaded")
 
-        input_points = np.array([[1000, 650], [3000, 650], [1000, 2650], [3000, 2650]])
-        input_labels = np.array([1, 1, 1, 1])
+        input_points = np.array([
+            # Foreground points
+            [870, 650], [3000, 650], [900, 1500], [3000, 1500], [1000, 2450], [3000, 2450],
+            # Background points
+            [1200, 670], [2000, 670], [2700, 670],
+            [1200, 1500], [2000, 1500], [2700, 1500],
+            [1200, 2200], [2000, 2200], [2700, 2200],
+        ])
+        input_labels = np.array([1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         
         if self.plot and self.verbose:
             self.log("Plotting loaded image...")
@@ -135,7 +147,7 @@ class QuadrantRecon:
             plt.show()
 
         self.log("Predicting...")
-        masks, scores, _ = predictor.predict(
+        masks, scores, _ = self.predictor.predict(
             point_coords=input_points,
             point_labels=input_labels,
             multimask_output=True,
@@ -143,6 +155,7 @@ class QuadrantRecon:
 
         # The last output is the highest scoring one.
         mask = masks[-1]
+        print(scores)
         score = scores[-1]
 
         if self.plot and self.verbose:
@@ -159,7 +172,7 @@ class QuadrantRecon:
         
         self.log("Searching for inner bounding box...")
 
-        bb = self.get_inner_bb(mask)
+        bb = self.get_inner_bb(mask, image.copy())
 
         if self.plot:
             self.log("Plotting inner bounding box for predicted mask...")
@@ -189,23 +202,61 @@ class QuadrantRecon:
         if not self.dry_run:
             self.log("Saving modified image...");
             
-            new_filename = filename[:-4] + "_cropped.JPG"
-    
+            new_filename = filename.split
+            image_cropped = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2BGR)
+
             cv2.imwrite(new_filename, image_cropped);
-    
+
             self.log("Writing metadata...")
-    
+
             metadata["0th"][piexif.ImageIFD.XResolution] = (self.width, 1)
             metadata["0th"][piexif.ImageIFD.YResolution] = (self.height, 1)
-    
+
             user_comment = piexif.helper.UserComment.dump(u"_quadrantrecon_marker")
             metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
-    
+
             exif_bytes = piexif.dump(metadata)
             piexif.insert(exif_bytes, new_filename)
 
+        return mask
+
+parser = argparse.ArgumentParser(
+    prog="QuadrantRecon",
+    description="Finds and crops out quadrants in images",
+)
+
+parser.add_argument("filename",
+                    help="one of the images to crop",
+                    nargs="+")
+parser.add_argument("-v", "--verbose",
+                    help="display debug information",
+                    action="store_true")
+parser.add_argument("-p", "--plot",
+                    help="plot results while working",
+                    action="store_true")
+parser.add_argument("--dry-run",
+                    help="dont save images after cropping",
+                    action="store_true")
+parser.add_argument("-d", "--device",
+                    help="device to run on (default: %(default)s)",
+                    default="cuda")
+parser.add_argument("--model-path",
+                    help="path to the segment anything model (default: %(default)s)",
+                    default="sam_vit_h.pth")
+parser.add_argument("--model-type",
+                    help="type of sam model that is being loaded (default: %(default)s)",
+                    default="vit_h")
+parser.add_argument("--width",
+                    help="width of the cropped area, in pixels (default: %(default)ipx)",
+                    type=int,
+                    default=1790)
+parser.add_argument("--height",
+                    help="height of the cropped area, in pixels (default: %(default)ipx)",
+                    type=int,
+                    default=1790)
 
 if __name__ == "__main__":
+<<<<<<< HEAD
     parser = argparse.ArgumentParser(
         prog="QuadrantRecon",
         description="Finds and crops out quadrants in images",
@@ -242,6 +293,8 @@ if __name__ == "__main__":
                         default="vit_h")
 
 
+=======
+>>>>>>> 5e57a41 (Add a notebook example.)
     qr = QuadrantRecon()
     parser.parse_args(namespace=qr)
 

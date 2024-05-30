@@ -3,9 +3,12 @@
 venv/
 build/
 dist/
+__pycache__/
+.ipynb_checkpoints/
 
 models/*
 
 test_data/
 
 *.pth
+*.zip
