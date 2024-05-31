@@ -18,6 +18,17 @@ import piexif
 import piexif.helper
 
 class QuadrantRecon:
+    def __init__(self):
+        self.filename = []
+        self.verbose = False
+        self.plot = False
+        self.dry_run = False
+        self.device = "cuda"
+        self.model_path = "sam_vit_h.pth"
+        self.model_type = "vit_h"
+        self.width = 1790
+        self.height = 1790
+
     def show_mask(self, mask, ax, random_color=False):
         if random_color:
             color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
