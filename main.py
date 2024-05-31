@@ -1,3 +1,4 @@
+import os
 import sys
 import argparse
 from itertools import islice, chain
@@ -26,6 +27,7 @@ class QuadrantRecon:
         self.device = "cuda"
         self.model_path = "sam_vit_h.pth"
         self.model_type = "vit_h"
+        self.extract_info = True
         self.width = 1790
         self.height = 1790
 
@@ -110,7 +112,7 @@ class QuadrantRecon:
         self.log("Creating predictor...")
         self.predictor = SamPredictor(sam)
 
-    def process_image(self, filename: str):
+    def process_image(self, filename: str, top_folder: str = ""):
         if not self.predictor:
             print("ERROR: Must load a predictor using load_predictor() first.")
 
@@ -121,7 +123,7 @@ class QuadrantRecon:
         try:
             user_comment = piexif.helper.UserComment.load(metadata["Exif"][piexif.ExifIFD.UserComment])
 
-            if user_comment == "_quadrantrecon_marker":
+            if "_quadrantrecon_marker" in user_comment:
                 print(f"Skipping {filename}: This image has already been modified by quadrantrecon.")
 
                 return
@@ -212,18 +214,27 @@ class QuadrantRecon:
         # Save image
         if not self.dry_run:
             self.log("Saving modified image...");
-            
-            new_filename = filename.split
-            image_cropped = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2BGR)
 
+            if not top_folder:
+                top_folder = os.path.dirname(filename)
+            
+            relative_path = os.path.relpath(filename, top_folder)
+
+            new_dir = "./cropped_images/" + os.path.dirname(relative_path) 
+            os.makedirs(new_dir, exist_ok=True)
+
+            new_filename = new_dir + "/" + os.path.basename(relative_path)
+
+            image_cropped = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2BGR)
             cv2.imwrite(new_filename, image_cropped);
 
             self.log("Writing metadata...")
+            
+            user_comment = piexif.helper.UserComment.dump("_quadrantrecon_marker/" + os.path.dirname(relative_path))
 
             metadata["0th"][piexif.ImageIFD.XResolution] = (self.width, 1)
             metadata["0th"][piexif.ImageIFD.YResolution] = (self.height, 1)
 
-            user_comment = piexif.helper.UserComment.dump(u"_quadrantrecon_marker")
             metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
 
             exif_bytes = piexif.dump(metadata)
@@ -269,5 +280,7 @@ parser.add_argument("--height",
 if __name__ == "__main__":
     qr = QuadrantRecon()
     parser.parse_args(namespace=qr)
+
+    qr.extract_info = False
 
     qr.main()
