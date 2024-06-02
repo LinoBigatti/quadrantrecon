@@ -9,6 +9,7 @@ __pycache__/
 models/*
 
 test_data/
+cropped_images/
 
 *.pth
 *.zip

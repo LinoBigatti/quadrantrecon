@@ -140,29 +140,23 @@ class QuadrantRecon:
         self.predictor.set_image(image)
         self.log("Predictor loaded")
 
-        input_points = np.array([
-            # Foreground points
-            [870, 650], [3000, 650], [900, 1500], [3000, 1500], [1000, 2450], [3000, 2450],
-            # Background points
-            [1200, 670], [2000, 670], [2700, 670],
-            [1200, 1500], [2000, 1500], [2700, 1500],
-            [1200, 2200], [2000, 2200], [2700, 2200],
-        ])
-        input_labels = np.array([1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        # Set box to find objects inside
+        input_box = np.array([500, 500, 3500, 3000])
         
         if self.plot and self.verbose:
             self.log("Plotting loaded image...")
 
             plt.figure(figsize=(10,10))
             plt.imshow(image)
-            self.show_points(input_points, input_labels, plt.gca())
+            self.show_box(input_box, plt.gca())
             plt.axis('on')
             plt.show()
 
         self.log("Predicting...")
         masks, scores, _ = self.predictor.predict(
-            point_coords=input_points,
-            point_labels=input_labels,
+            point_coords=None,
+            point_labels=None,
+            box=input_box[None, :],
             multimask_output=True,
         )
 
