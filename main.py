@@ -99,7 +99,7 @@ class QuadrantRecon:
             self.process_image(filename)
 
     def create_predictor(self):
-        if self.plot:
+        if self.plot and not "google.colab" in sys.modules:
             matplotlib.use('TKagg')
 
         self.log("Loading model...")
@@ -141,7 +141,7 @@ class QuadrantRecon:
         self.log("Predictor loaded")
 
         # Set box to find objects inside
-        input_box = np.array([500, 500, 3500, 3000])
+        input_box = np.array([0, 500, 4000, 3000])
         
         if self.plot and self.verbose:
             self.log("Plotting loaded image...")
