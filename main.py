@@ -63,13 +63,26 @@ class QuadrantRecon:
         _mask = np.uint8(mask * 255)
         contours, _hierarchy = cv2.findContours(_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
 
-        # Sort contours by area. Largest area is gonna be the outer contour, and second largest is gonna be the inner contour.
+        # Sort contours by area.
+        # Heuristic: Largest area is gonna be the outer contour, and second largest is gonna be the inner contour.
         cnts = sorted(contours, key=cv2.contourArea, reverse=True)
+
+        cnt = cnts[1]
+        print(cv2.arcLength(cnts[0], True))
+
+        # Heuristic: If the arc length is smaller than a treshold, we assume its bad
+        # and grab the largest one. This is likely to be the full frame,
+        # so we need more padding.
+        extra_padding = 0
+        if cv2.arcLength(cnt, True) < 6000:
+          cnt = cnts[0]
+
+          extra_padding = 160
 
         # Get closest point to top left corner in inner contour
         min_dist = 100000000
         min_dist_point = None
-        for point in cnts[1]:
+        for point in cnt:
             point = point[0]
         
             dist = sqrt(point[0] ** 2 + point[1] ** 2)
@@ -83,7 +96,7 @@ class QuadrantRecon:
 
             plt.figure(figsize=(10, 10))
 
-            cv2.drawContours(img, cnts, 1, (255, 0, 0), 3)
+            cv2.drawContours(img, cnts, -1, (255, 0, 0), 3)
             cv2.circle(img, min_dist_point, 3, (0, 255, 0), 10)
 
             plt.imshow(img)
@@ -94,8 +107,8 @@ class QuadrantRecon:
 
         # Add padding
         x, y = min_dist_point
-        x += self.padding_width
-        y += self.padding_height
+        x += self.padding_width + extra_padding
+        y += self.padding_height + extra_padding
         
         return [x, y, x + self.width, y + self.height] 
 
@@ -148,15 +161,15 @@ class QuadrantRecon:
         self.log("Predictor loaded")
 
         # Set box to find objects inside
-        input_box = np.array([0, 500, 4000, 3000])
+        input_box = np.array([0, 200, 4000, 3000])
 
         # Set inner background points to remove objects from the inside
         input_points = np.array([
-            [1300, 800], [1650, 800], [2000, 800], [2350, 800], [2700, 800],
-            [1300, 1050], [1650, 1050], [2000, 1050], [2350, 1050], [2700, 1050],
+            [1300, 1250], [1650, 1250], [2000, 1250], [2350, 1250], [2700, 1250],
             [1300, 1500], [1650, 1500], [2000, 1500], [2350, 1500], [2700, 1500],
             [1300, 1750], [1650, 1750], [2000, 1750], [2350, 1750], [2700, 1750],
             [1300, 2000], [1650, 2000], [2000, 2000], [2350, 2000], [2700, 2000],
+            [1300, 2250], [1650, 2250], [2000, 2250], [2350, 2250], [2700, 2250],
         ])
         input_labels = np.array([0] * len(input_points))
         
