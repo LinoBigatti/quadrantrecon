@@ -21,6 +21,7 @@ import piexif.helper
 class QuadrantRecon:
     def __init__(self):
         self.filename = []
+        self.output_path = "./cropped_images/"
         self.verbose = False
         self.plot = False
         self.dry_run = False
@@ -28,8 +29,10 @@ class QuadrantRecon:
         self.model_path = "sam_vit_h.pth"
         self.model_type = "vit_h"
         self.extract_info = True
-        self.width = 1790
-        self.height = 1790
+        self.width = 1600
+        self.height = 1600
+        self.padding_width = 80
+        self.padding_height = 80
 
     def show_mask(self, mask, ax, random_color=False):
         if random_color:
@@ -88,7 +91,11 @@ class QuadrantRecon:
             plt.axis("off")
             plt.show()
 
+
+        # Add padding
         x, y = min_dist_point
+        x += self.padding_width
+        y += self.padding_height
         
         return [x, y, x + self.width, y + self.height] 
 
@@ -142,6 +149,16 @@ class QuadrantRecon:
 
         # Set box to find objects inside
         input_box = np.array([0, 500, 4000, 3000])
+
+        # Set inner background points to remove objects from the inside
+        input_points = np.array([
+            [1300, 800], [1650, 800], [2000, 800], [2350, 800], [2700, 800],
+            [1300, 1050], [1650, 1050], [2000, 1050], [2350, 1050], [2700, 1050],
+            [1300, 1500], [1650, 1500], [2000, 1500], [2350, 1500], [2700, 1500],
+            [1300, 1750], [1650, 1750], [2000, 1750], [2350, 1750], [2700, 1750],
+            [1300, 2000], [1650, 2000], [2000, 2000], [2350, 2000], [2700, 2000],
+        ])
+        input_labels = np.array([0] * len(input_points))
         
         if self.plot and self.verbose:
             self.log("Plotting loaded image...")
@@ -149,13 +166,14 @@ class QuadrantRecon:
             plt.figure(figsize=(10,10))
             plt.imshow(image)
             self.show_box(input_box, plt.gca())
+            self.show_points(input_points, input_labels, plt.gca())
             plt.axis('on')
             plt.show()
 
         self.log("Predicting...")
         masks, scores, _ = self.predictor.predict(
-            point_coords=None,
-            point_labels=None,
+            point_coords=input_points,
+            point_labels=input_labels,
             box=input_box[None, :],
             multimask_output=True,
         )
@@ -214,10 +232,10 @@ class QuadrantRecon:
             
             relative_path = os.path.relpath(filename, top_folder)
 
-            new_dir = "./cropped_images/" + os.path.dirname(relative_path) 
+            new_dir = os.path.join(self.output_path, os.path.dirname(relative_path))
             os.makedirs(new_dir, exist_ok=True)
 
-            new_filename = new_dir + "/" + os.path.basename(relative_path)
+            new_filename = os.path.join(new_dir, os.path.basename(relative_path))
 
             image_cropped = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2BGR)
             cv2.imwrite(new_filename, image_cropped);
@@ -236,43 +254,55 @@ class QuadrantRecon:
 
         return mask
 
-parser = argparse.ArgumentParser(
-    prog="QuadrantRecon",
-    description="Finds and crops out quadrants in images",
-)
-
-parser.add_argument("filename",
-                    help="one of the images to crop",
-                    nargs="+")
-parser.add_argument("-v", "--verbose",
-                    help="display debug information",
-                    action="store_true")
-parser.add_argument("-p", "--plot",
-                    help="plot results while working",
-                    action="store_true")
-parser.add_argument("--dry-run",
-                    help="dont save images after cropping",
-                    action="store_true")
-parser.add_argument("-d", "--device",
-                    help="device to run on (default: %(default)s)",
-                    default="cuda")
-parser.add_argument("--model-path",
-                    help="path to the segment anything model (default: %(default)s)",
-                    default="sam_vit_h.pth")
-parser.add_argument("--model-type",
-                    help="type of sam model that is being loaded (default: %(default)s)",
-                    default="vit_h")
-parser.add_argument("--width",
-                    help="width of the cropped area, in pixels (default: %(default)ipx)",
-                    type=int,
-                    default=1790)
-parser.add_argument("--height",
-                    help="height of the cropped area, in pixels (default: %(default)ipx)",
-                    type=int,
-                    default=1790)
-
 if __name__ == "__main__":
     qr = QuadrantRecon()
+
+    parser = argparse.ArgumentParser(
+        prog="QuadrantRecon",
+        description="Finds and crops out quadrants in images",
+    )
+
+    parser.add_argument("filename",
+                        help="one of the images to crop",
+                        nargs="+")
+    parser.add_argument("-o", "--output_path",
+                        help="folder to output cropped files to (default: %(default)s)",
+                        default=qr.output_path)
+    parser.add_argument("-v", "--verbose",
+                        help="display debug information",
+                        action="store_true")
+    parser.add_argument("-p", "--plot",
+                        help="plot results while working",
+                        action="store_true")
+    parser.add_argument("--dry-run",
+                        help="dont save images after cropping",
+                        action="store_true")
+    parser.add_argument("-d", "--device",
+                        help="device to run on (default: %(default)s)",
+                        default=qr.device)
+    parser.add_argument("--model-path",
+                        help="path to the segment anything model (default: %(default)s)",
+                        default=qr.model_path)
+    parser.add_argument("--model-type",
+                        help="type of sam model that is being loaded (default: %(default)s)",
+                        default=qr.model_type)
+    parser.add_argument("--width",
+                        help="width of the cropped area, in pixels (default: %(default)ipx)",
+                        type=int,
+                        default=qr.width)
+    parser.add_argument("--height",
+                        help="height of the cropped area, in pixels (default: %(default)ipx)",
+                        type=int,
+                        default=qr.height)
+    parser.add_argument("--padding_width",
+                        help="width of the padding between the cropped area and the quadrant's top left corner, in pixels (default: %(default)ipx)",
+                        type=int,
+                        default=qr.padding_width)
+    parser.add_argument("--padding_height",
+                        help="height of the padding between the cropped area and the quadrant's top left corner, in pixels (default: %(default)ipx)",
+                        type=int,
+                        default=qr.padding_height)
+
     parser.parse_args(namespace=qr)
 
     qr.extract_info = False
