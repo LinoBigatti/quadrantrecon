@@ -68,8 +68,7 @@ class QuadrantRecon:
         cnts = sorted(contours, key=cv2.contourArea, reverse=True)
 
         cnt = cnts[1]
-        print(cv2.arcLength(cnts[0], True))
-
+        
         # Heuristic: If the arc length is smaller than a treshold, we assume its bad
         # and grab the largest one. This is likely to be the full frame,
         # so we need more padding.
@@ -78,7 +77,7 @@ class QuadrantRecon:
           cnt = cnts[0]
 
           extra_padding = 160
-
+        
         # Get closest point to top left corner in inner contour
         min_dist = 100000000
         min_dist_point = None
@@ -144,7 +143,7 @@ class QuadrantRecon:
             user_comment = piexif.helper.UserComment.load(metadata["Exif"][piexif.ExifIFD.UserComment])
 
             if "_quadrantrecon_marker" in user_comment:
-                print(f"Skipping {filename}: This image has already been modified by quadrantrecon.")
+                self.log(f"Skipping {filename}: This image has already been modified by quadrantrecon.")
 
                 return
         except ValueError:
@@ -234,10 +233,32 @@ class QuadrantRecon:
             plt.imshow(image_cropped)
             plt.title(f"Cropped Image", fontsize=18)
             plt.axis("off")
-            plt.show()
+            plt.show()  
+
+        failed = False
+        
+        # If the cropped size is wrong, we ran into a corner or side.
+        cropped_width = np.shape(image_cropped)[0]
+        cropped_height = np.shape(image_cropped)[1]
+
+        if cropped_width != self.width or cropped_height != self.height:
+          failed = True
+
+        # Detect yellow color in image.
+        image_hsv = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2HSV)
+        lower = np.array([22, 93, 0], dtype="uint8")
+        upper = np.array([45, 255, 255], dtype="uint8")
+
+        yellow_mask = cv2.inRange(image, lower, upper)
+        yellow_content = np.count_nonzero(yellow_mask) / (self.width * self.height)
+        
+        # Heuristic: If yellow content in the image is too high, we probably
+        # cropped a part of the quadrant.
+        if yellow_content > 0.2:
+          failed = True
 
         # Save image
-        if not self.dry_run:
+        if not self.dry_run and not failed:
             self.log("Saving modified image...");
 
             if not top_folder:
@@ -265,7 +286,7 @@ class QuadrantRecon:
             exif_bytes = piexif.dump(metadata)
             piexif.insert(exif_bytes, new_filename)
 
-        return mask
+        return failed
 
 if __name__ == "__main__":
     qr = QuadrantRecon()
