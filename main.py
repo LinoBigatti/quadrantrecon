@@ -149,7 +149,7 @@ class QuadrantRecon:
         if os.path.isfile(new_filename) and not self.force:
             self.log(f"Skipping {filename}: The output file already exists. Use --force to process it anyways.")
 
-            return
+            return -2
 
         metadata = piexif.load(filename)
 
@@ -159,7 +159,7 @@ class QuadrantRecon:
             if "_quadrantrecon_marker" in user_comment and not self.force:
                 self.log(f"Skipping {filename}: This image has already been modified by quadrantrecon.")
 
-                return
+                return -2
         except ValueError:
             pass
 
@@ -260,8 +260,8 @@ class QuadrantRecon:
         # Detect yellow color in image.
         if not failed:
             image_hsv = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2HSV)
-            lower = np.array([22, 93, 0], dtype="uint8")
-            upper = np.array([45, 255, 255], dtype="uint8")
+            lower = np.array([21, 0, 230], dtype="uint8")
+            upper = np.array([61, 255, 255], dtype="uint8")
 
             yellow_mask = cv2.inRange(image, lower, upper)
             yellow_content = np.count_nonzero(yellow_mask) / (self.width * self.height)
@@ -304,7 +304,7 @@ class QuadrantRecon:
             exif_bytes = piexif.dump(metadata)
             piexif.insert(exif_bytes, new_filename)
 
-        return failed
+        return -1 if failed else 0
 
 if __name__ == "__main__":
     qr = QuadrantRecon()
