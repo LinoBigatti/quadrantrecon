@@ -24,15 +24,15 @@ class QuadrantRecon:
         self.output_path = "./cropped_images/"
         self.verbose = False
         self.plot = False
+        self.force = False
         self.dry_run = False
         self.device = "cuda"
         self.model_path = "sam_vit_h.pth"
         self.model_type = "vit_h"
-        self.extract_info = True
-        self.width = 1600
-        self.height = 1600
-        self.padding_width = 80
-        self.padding_height = 80
+        self.width = 1700
+        self.height = 1700
+        self.padding_width = 45
+        self.padding_height = 45
 
     def show_mask(self, mask, ax, random_color=False):
         if random_color:
@@ -133,16 +133,30 @@ class QuadrantRecon:
 
     def process_image(self, filename: str, top_folder: str = ""):
         if not self.predictor:
-            print("ERROR: Must load a predictor using load_predictor() first.")
+            print("ERROR: Must load a predictor using create_predictor() first.")
 
             exit()
         
+        if not top_folder:
+            top_folder = os.path.dirname(filename)
+        
+        relative_path = os.path.relpath(filename, top_folder)
+
+        new_dir = os.path.join(self.output_path, os.path.dirname(relative_path))
+
+        new_filename = os.path.join(new_dir, os.path.basename(relative_path))
+        
+        if os.path.isfile(new_filename) and not self.force:
+            self.log(f"Skipping {filename}: The output file already exists. Use --force to process it anyways.")
+
+            return
+
         metadata = piexif.load(filename)
 
         try:
             user_comment = piexif.helper.UserComment.load(metadata["Exif"][piexif.ExifIFD.UserComment])
 
-            if "_quadrantrecon_marker" in user_comment:
+            if "_quadrantrecon_marker" in user_comment and not self.force:
                 self.log(f"Skipping {filename}: This image has already been modified by quadrantrecon.")
 
                 return
@@ -192,7 +206,6 @@ class QuadrantRecon:
 
         # The last output is the highest scoring one.
         mask = masks[-1]
-        print(scores)
         score = scores[-1]
 
         if self.plot and self.verbose:
@@ -245,21 +258,26 @@ class QuadrantRecon:
           failed = True
 
         # Detect yellow color in image.
-        image_hsv = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2HSV)
-        lower = np.array([22, 93, 0], dtype="uint8")
-        upper = np.array([45, 255, 255], dtype="uint8")
+        if not failed:
+            image_hsv = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2HSV)
+            lower = np.array([22, 93, 0], dtype="uint8")
+            upper = np.array([45, 255, 255], dtype="uint8")
 
-        yellow_mask = cv2.inRange(image, lower, upper)
-        yellow_content = np.count_nonzero(yellow_mask) / (self.width * self.height)
+            yellow_mask = cv2.inRange(image, lower, upper)
+            yellow_content = np.count_nonzero(yellow_mask) / (self.width * self.height)
         
-        # Heuristic: If yellow content in the image is too high, we probably
-        # cropped a part of the quadrant.
-        if yellow_content > 0.2:
-          failed = True
+            # Heuristic: If yellow content in the image is too high, we probably
+            # cropped a part of the quadrant.
+            if yellow_content >= 0.012:
+              failed = True
+
+              self.log(f"{yellow_content:}")
 
         # Save image
         if not self.dry_run and not failed:
             self.log("Saving modified image...");
+
+            os.makedirs(new_dir, exist_ok=True)
 
             if not top_folder:
                 top_folder = os.path.dirname(filename)
@@ -308,6 +326,9 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--plot",
                         help="plot results while working",
                         action="store_true")
+    parser.add_argument("-f", "--force",
+                        help="process files even if they were already processed",
+                        action="store_true")
     parser.add_argument("--dry-run",
                         help="dont save images after cropping",
                         action="store_true")
@@ -339,6 +360,5 @@ if __name__ == "__main__":
 
     parser.parse_args(namespace=qr)
 
-    qr.extract_info = False
-
     qr.main()
+
