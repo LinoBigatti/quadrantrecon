@@ -72,11 +72,13 @@ class QuadrantRecon:
         # Heuristic: If the arc length is smaller than a treshold, we assume its bad
         # and grab the largest one. This is likely to be the full frame,
         # so we need more padding.
-        extra_padding = 0
+        extra_padding_x = 0
+        extra_padding_y = 0
         if cv2.arcLength(cnt, True) < 6000:
           cnt = cnts[0]
 
-          extra_padding = 160
+          extra_padding_x = 260
+          extra_padding_y = 200
         
         # Get closest point to top left corner in inner contour
         min_dist = 100000000
@@ -106,8 +108,8 @@ class QuadrantRecon:
 
         # Add padding
         x, y = min_dist_point
-        x += self.padding_width + extra_padding
-        y += self.padding_height + extra_padding
+        x += self.padding_width + extra_padding_x
+        y += self.padding_height + extra_padding_y
         
         return [x, y, x + self.width, y + self.height] 
 
@@ -260,34 +262,24 @@ class QuadrantRecon:
         # Detect yellow color in image.
         if not failed:
             image_hsv = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2HSV)
-            lower = np.array([21, 0, 230], dtype="uint8")
-            upper = np.array([61, 255, 255], dtype="uint8")
+            lower = np.array([14, 60, 45], dtype="uint8")
+            upper = np.array([35, 255, 255], dtype="uint8")
 
-            yellow_mask = cv2.inRange(image, lower, upper)
+            yellow_mask = cv2.inRange(image_hsv, lower, upper)
             yellow_content = np.count_nonzero(yellow_mask) / (self.width * self.height)
         
             # Heuristic: If yellow content in the image is too high, we probably
             # cropped a part of the quadrant.
-            if yellow_content >= 0.012:
-              failed = True
+            self.log(f"{yellow_content=}")
 
-              self.log(f"{yellow_content:}")
+            if yellow_content >= 0.02:
+              failed = True
 
         # Save image
         if not self.dry_run and not failed:
             self.log("Saving modified image...");
 
             os.makedirs(new_dir, exist_ok=True)
-
-            if not top_folder:
-                top_folder = os.path.dirname(filename)
-            
-            relative_path = os.path.relpath(filename, top_folder)
-
-            new_dir = os.path.join(self.output_path, os.path.dirname(relative_path))
-            os.makedirs(new_dir, exist_ok=True)
-
-            new_filename = os.path.join(new_dir, os.path.basename(relative_path))
 
             image_cropped = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2BGR)
             cv2.imwrite(new_filename, image_cropped);
