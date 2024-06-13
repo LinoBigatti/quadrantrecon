@@ -261,19 +261,38 @@ class QuadrantRecon:
 
         # Detect yellow color in image.
         if not failed:
-            image_hsv = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2HSV)
-            lower = np.array([14, 60, 45], dtype="uint8")
-            upper = np.array([35, 255, 255], dtype="uint8")
+            image_hsv = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2HSV)
+            lower = np.array([25, 0, 0], dtype="uint8")
+            upper = np.array([40, 255, 255], dtype="uint8")
+            
+            # Set a 45x45 matrix as the kernel
+            kernel = np.ones((45, 45), np.uint8)
 
+            # Threshold yellow color
             yellow_mask = cv2.inRange(image_hsv, lower, upper)
+
+            # Erode and dilate image to remove imperfections
+            yellow_mask = cv2.erode(yellow_mask, kernel, iterations=1)
+            yellow_mask = cv2.dilate(yellow_mask, kernel, iterations=1)
+
+            # Count percentage of the image detected as yellow
             yellow_content = np.count_nonzero(yellow_mask) / (self.width * self.height)
+
+            # Plot yellow content
+            if self.plot and self.verbose:
+                plt.figure(figsize=(10, 10))
+                plt.imshow(image_cropped)
+                plt.title(f"Yellow Mask", fontsize=18)
+                plt.axis("off")
+                plt.show()  
         
             # Heuristic: If yellow content in the image is too high, we probably
             # cropped a part of the quadrant.
+            if yellow_content >= 0.05:
+              failed = True
+
             self.log(f"{yellow_content=}")
 
-            if yellow_content >= 0.02:
-              failed = True
 
         # Save image
         if not self.dry_run and not failed:
