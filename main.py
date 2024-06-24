@@ -59,65 +59,93 @@ class QuadrantRecon:
             print(message)
 
     def get_inner_bb(self, mask, img):
-        # Detect contours in object mask
+        failed = False
+
+        # Remove imperfections from mask
         _mask = np.uint8(mask * 255)
+
+        kernel = np.ones((25, 25), np.uint8)
+        _mask = cv2.erode(_mask, kernel, iterations=1)
+
+        # Detect contours in object mask
         contours, _hierarchy = cv2.findContours(_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
 
         # Sort contours by area.
         # Heuristic: Largest area is gonna be the outer contour, and second largest is gonna be the inner contour.
         cnts = sorted(contours, key=cv2.contourArea, reverse=True)
 
-        cnt = cnts[1]
+        cnt = cnts[0]
         
-        # Heuristic: If the arc length is smaller than a treshold, we assume its bad
-        # and grab the largest one. This is likely to be the full frame,
-        # so we need more padding.
-        extra_padding_x = 0
-        extra_padding_y = 0
+        # Heuristic: If the contour length is too small, its probably not the right object.
         if cv2.arcLength(cnt, True) < 6000:
-          cnt = cnts[0]
-
-          extra_padding_x = 260
-          extra_padding_y = 200
+            failed = True
         
-        # Get closest point to top left corner in inner contour
-        min_dist = 100000000
-        min_dist_point = None
+        # Get closest points to corners in contour
+        corners = [None] * 4
+        corner_dists = [100000000] * 4
         for point in cnt:
             point = point[0]
         
-            dist = sqrt(point[0] ** 2 + point[1] ** 2)
-            
-            if dist < min_dist:
-                min_dist = dist
-                min_dist_point = point
-        
+            # Note: Lower corners are not the image corners, but some points 500px inwards. This is because the quadrants have some handles on the sides
+            for i, (x, y) in enumerate([[0, 0], [3500, 3000], [4000, 0], [500, 3000]]):
+                # Euclidean distance
+                dist = sqrt((x - point[0]) ** 2 + (y - point[1]) ** 2)
+                
+                if dist < corner_dists[i]:
+                    corners[i] = point
+                    corner_dists[i] = dist
+
+        # Get the intersection between the lines formed by the opposing corner points. We will use that as the center of the quadrant.
+        # TODO: Document algorithm.
+        da = corners[1] - corners[0]
+        db = corners[3] - corners[2]
+        dp = corners[0] - corners[2]
+        dap = np.empty_like(da)
+        dap[0] = -da[1]
+        dap[1] = da[0]
+
+        denom = np.dot(dap, db)
+        num = np.dot(dap, dp)
+        center = np.ndarray.astype((num / denom) * db + corners[2], np.uint32)
+
+        x = int(center[0] - self.width / 2)
+        y = int(center[1] - self.height / 2)
+
+        # Heuristic: Most images need to be cropped near a certain X region. Fails if its outside as a safeguard.
+        if x < 900 or x > 1200:
+            failed = True
+
         if self.plot and self.verbose:
             self.log("Plotting detected corners and inner contour...")
 
             plt.figure(figsize=(10, 10))
 
             cv2.drawContours(img, cnts, -1, (255, 0, 0), 3)
-            cv2.circle(img, min_dist_point, 3, (0, 255, 0), 10)
+            
+            for p in corners:
+                cv2.circle(img, p, 3, (0, 255, 0), 10)
+
+            cv2.circle(img, center, 7, (255, 0, 255), 10)
 
             plt.imshow(img)
 
             plt.axis("off")
             plt.show()
 
-
-        # Add padding
-        x, y = min_dist_point
-        x += self.padding_width + extra_padding_x
-        y += self.padding_height + extra_padding_y
         
-        return [x, y, x + self.width, y + self.height] 
+        return [x, y, x + self.width, y + self.height], failed
 
     def main(self):
         self.create_predictor()
         
         for filename in self.filename:
-            self.process_image(filename)
+            if os.path.isfile(filename):
+                self.process_image(filename)
+            
+            if os.path.isdir(filename):
+                for root, folders, files in os.walk(filename):
+                    for file in files:
+                        self.process_image(os.path.join(root, file), filename)
 
     def create_predictor(self):
         if self.plot and not "google.colab" in sys.modules:
@@ -224,7 +252,7 @@ class QuadrantRecon:
         
         self.log("Searching for inner bounding box...")
 
-        bb = self.get_inner_bb(mask, image.copy())
+        bb, failed = self.get_inner_bb(mask, image.copy())
 
         if self.plot:
             self.log("Plotting inner bounding box for predicted mask...")
@@ -249,50 +277,26 @@ class QuadrantRecon:
             plt.title(f"Cropped Image", fontsize=18)
             plt.axis("off")
             plt.show()  
-
-        failed = False
         
-        # If the cropped size is wrong, we ran into a corner or side.
-        cropped_width = np.shape(image_cropped)[0]
-        cropped_height = np.shape(image_cropped)[1]
-
-        if cropped_width != self.width or cropped_height != self.height:
-          failed = True
-
-        # Detect yellow color in image.
         if not failed:
-            image_hsv = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2HSV)
-            lower = np.array([25, 0, 0], dtype="uint8")
-            upper = np.array([40, 255, 255], dtype="uint8")
-            
-            # Set a 45x45 matrix as the kernel
-            kernel = np.ones((45, 45), np.uint8)
+            # If the cropped size is wrong, we ran into a corner or side.
+            cropped_width = np.shape(image_cropped)[0]
+            cropped_height = np.shape(image_cropped)[1]
 
-            # Threshold yellow color
-            yellow_mask = cv2.inRange(image_hsv, lower, upper)
-
-            # Erode and dilate image to remove imperfections
-            yellow_mask = cv2.erode(yellow_mask, kernel, iterations=1)
-            yellow_mask = cv2.dilate(yellow_mask, kernel, iterations=1)
-
-            # Count percentage of the image detected as yellow
-            yellow_content = np.count_nonzero(yellow_mask) / (self.width * self.height)
-
-            # Plot yellow content
-            if self.plot and self.verbose:
-                plt.figure(figsize=(10, 10))
-                plt.imshow(image_cropped)
-                plt.title(f"Yellow Mask", fontsize=18)
-                plt.axis("off")
-                plt.show()  
-        
-            # Heuristic: If yellow content in the image is too high, we probably
-            # cropped a part of the quadrant.
-            if yellow_content >= 0.05:
+            if cropped_width != self.width or cropped_height != self.height:
               failed = True
 
-            self.log(f"{yellow_content=}")
+        if not failed:
+            image_gray = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2GRAY)
+            image_gray = cv2.threshold(image_gray, 200, 255, cv2.THRESH_BINARY)[1]
 
+            kernel = np.ones((5, 5), np.uint8)
+            image_gray = cv2.erode(image_gray, kernel, iterations=4)
+            
+            yellow_content = np.count_nonzero(image_gray) / (self.width * self.height)
+
+            if yellow_content >= 0.01:
+                failed = True
 
         # Save image
         if not self.dry_run and not failed:
@@ -328,7 +332,7 @@ if __name__ == "__main__":
     parser.add_argument("filename",
                         help="one of the images to crop",
                         nargs="+")
-    parser.add_argument("-o", "--output_path",
+    parser.add_argument("-o", "--output-path",
                         help="folder to output cropped files to (default: %(default)s)",
                         default=qr.output_path)
     parser.add_argument("-v", "--verbose",
@@ -360,11 +364,11 @@ if __name__ == "__main__":
                         help="height of the cropped area, in pixels (default: %(default)ipx)",
                         type=int,
                         default=qr.height)
-    parser.add_argument("--padding_width",
+    parser.add_argument("--padding-width",
                         help="width of the padding between the cropped area and the quadrant's top left corner, in pixels (default: %(default)ipx)",
                         type=int,
                         default=qr.padding_width)
-    parser.add_argument("--padding_height",
+    parser.add_argument("--padding-height",
                         help="height of the padding between the cropped area and the quadrant's top left corner, in pixels (default: %(default)ipx)",
                         type=int,
                         default=qr.padding_height)
