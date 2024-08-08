@@ -74,6 +74,9 @@ class QuadrantRecon:
         # Heuristic: Largest area is gonna be the outer contour, and second largest is gonna be the inner contour.
         cnts = sorted(contours, key=cv2.contourArea, reverse=True)
 
+        if not cnts:
+            return [0, 0, 0, 0], True
+
         cnt = cnts[0]
         
         # Heuristic: If the contour length is too small, its probably not the right object.
@@ -145,7 +148,9 @@ class QuadrantRecon:
             if os.path.isdir(filename):
                 for root, folders, files in os.walk(filename):
                     for file in files:
-                        self.process_image(os.path.join(root, file), filename)
+                        if ".JPG" in file.upper() or ".JPEG" in file.upper() or ".PNG" in file.upper():
+                            print(file)
+                            self.process_image(os.path.join(root, file), filename)
 
     def create_predictor(self):
         if self.plot and not "google.colab" in sys.modules:
@@ -190,7 +195,7 @@ class QuadrantRecon:
                 self.log(f"Skipping {filename}: This image has already been modified by quadrantrecon.")
 
                 return -2
-        except ValueError:
+        except:
             pass
 
         self.log(f"Loading image from path {filename}...")
