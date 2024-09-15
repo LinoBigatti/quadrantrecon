@@ -1,5 +1,6 @@
 import os
 import sys
+import csv
 import argparse
 from itertools import islice, chain
 from math import sqrt
@@ -17,6 +18,38 @@ import matplotlib.pyplot as plt
 
 import piexif 
 import piexif.helper
+
+class Result:
+    def __init__(self, filename: str = ""):
+        self.failed = False
+        self.filename = filename
+        self.process = ""
+        self.current_block = ""
+        self.error_reason = ""
+    
+    def Err(self, process: str, block: str, reason: str):
+        self.failed = True
+        self.process = process
+        self.current_block = block
+        self.error_reason = reason
+
+        return self
+
+    def Ok(self):
+        self.failed = False
+
+        return self
+
+    def copy_from(self, other):
+        self.failed = other.failed 
+        self.process = other.process
+        self.current_block = other.current_block
+        self.error_reason = other.error_reason
+
+        return self
+
+    def get_as_row(self):
+        return [self.failed, self.filename, self.process, self.current_block, self.error_reason]
 
 class QuadrantRecon:
     def __init__(self):
@@ -59,7 +92,7 @@ class QuadrantRecon:
             print(message)
 
     def get_inner_bb(self, mask, img):
-        failed = False
+        result = Result("")
 
         # Remove imperfections from mask
         _mask = np.uint8(mask * 255)
@@ -75,13 +108,14 @@ class QuadrantRecon:
         cnts = sorted(contours, key=cv2.contourArea, reverse=True)
 
         if not cnts:
-            return [0, 0, 0, 0], True
+            return [0, 0, 0, 0], result.Err("bb_cropping", "contour_detection", "Bounding Box detection failed: No contours were detected.")
 
         cnt = cnts[0]
         
         # Heuristic: If the contour length is too small, its probably not the right object.
-        if cv2.arcLength(cnt, True) < 6000:
-            failed = True
+        MIN_CNT_LEN = 6000
+        if a := cv2.arcLength(cnt, True) < MIN_CNT_LEN:
+            result = result.Err("bb_cropping", "arc_length_check", f"Bounding Box detection failed: Expected contour arc length to be above {MIN_CNT_LEN} (current: {a})")
         
         # Get closest points to corners in contour
         corners = [None] * 4
@@ -115,8 +149,10 @@ class QuadrantRecon:
         y = int(center[1] - self.height / 2)
 
         # Heuristic: Most images need to be cropped near a certain X region. Fails if its outside as a safeguard.
-        if x < 900 or x > 1200:
-            failed = True
+        MIN_X = 900
+        MAX_X = 1200
+        if x < MIN_X or x > MAX_X:
+            result = result.Err("bb_cropping", "x_region_check", f"Bounding Box detection failed: Expected X between {MIN_X} and {MAX_X} (Current X: {x}, current y: {y})")
 
         if self.plot and self.verbose:
             self.log("Plotting detected corners and inner contour...")
@@ -135,22 +171,35 @@ class QuadrantRecon:
             plt.axis("off")
             plt.show()
 
+        if not result.failed:
+            result = result.Ok()
         
-        return [x, y, x + self.width, y + self.height], failed
+        return [x, y, x + self.width, y + self.height], result
 
     def main(self):
         self.create_predictor()
         
-        for filename in self.filename:
-            if os.path.isfile(filename):
-                self.process_image(filename)
-            
-            if os.path.isdir(filename):
-                for root, folders, files in os.walk(filename):
-                    for file in files:
-                        if ".JPG" in file.upper() or ".JPEG" in file.upper() or ".PNG" in file.upper():
-                            print(file)
-                            self.process_image(os.path.join(root, file), filename)
+        results = []
+
+        try:
+            for filename in self.filename:
+                if os.path.isfile(filename):
+                    results.append(self.process_image(filename))
+                
+                if os.path.isdir(filename):
+                    for root, folders, files in os.walk(filename):
+                        for file in files:
+                            if ".JPG" in file.upper() or ".JPEG" in file.upper() or ".PNG" in file.upper():
+                                results.append(self.process_image(os.path.join(root, file), filename))
+        except:
+            pass
+        finally:
+            with open("log.csv", "w", newline="") as f:
+                writer = csv.writer(f, delimiter = ";")
+
+                for result in results:
+                    writer.writerow(result.get_as_row())
+
 
     def create_predictor(self):
         if self.plot and not "google.colab" in sys.modules:
@@ -167,6 +216,8 @@ class QuadrantRecon:
         self.predictor = SamPredictor(sam)
 
     def process_image(self, filename: str, top_folder: str = ""):
+        result = Result(filename)
+
         if not self.predictor:
             print("ERROR: Must load a predictor using create_predictor() first.")
 
@@ -184,7 +235,7 @@ class QuadrantRecon:
         if os.path.isfile(new_filename) and not self.force:
             self.log(f"Skipping {filename}: The output file already exists. Use --force to process it anyways.")
 
-            return -2
+            return result.Err("preprocessing", "check_output_file", "File skipped: Output file already exists")
 
         metadata = piexif.load(filename)
 
@@ -194,7 +245,7 @@ class QuadrantRecon:
             if "_quadrantrecon_marker" in user_comment and not self.force:
                 self.log(f"Skipping {filename}: This image has already been modified by quadrantrecon.")
 
-                return -2
+                return result.Err("preprocessing", "check_input_file", "File skipped: Input file was marked by quadrantrecon")
         except:
             pass
 
@@ -257,7 +308,7 @@ class QuadrantRecon:
         
         self.log("Searching for inner bounding box...")
 
-        bb, failed = self.get_inner_bb(mask, image.copy())
+        bb, bb_result = self.get_inner_bb(mask, image.copy())
 
         if self.plot:
             self.log("Plotting inner bounding box for predicted mask...")
@@ -282,29 +333,31 @@ class QuadrantRecon:
             plt.title(f"Cropped Image", fontsize=18)
             plt.axis("off")
             plt.show()  
+
+        if bb_result.failed:
+            return result.copy_from(bb_result)
         
-        if not failed:
-            # If the cropped size is wrong, we ran into a corner or side.
-            cropped_width = np.shape(image_cropped)[0]
-            cropped_height = np.shape(image_cropped)[1]
+        # If the cropped size is wrong, we ran into a corner or side.
+        cropped_width = np.shape(image_cropped)[0]
+        cropped_height = np.shape(image_cropped)[1]
 
-            if cropped_width != self.width or cropped_height != self.height:
-              failed = True
+        if cropped_width != self.width or cropped_height != self.height:
+            return result.Err("failsafe", "bounds_check", "Image discarded: Cropped width and height are different than expected")
 
-        if not failed:
-            image_gray = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2GRAY)
-            image_gray = cv2.threshold(image_gray, 200, 255, cv2.THRESH_BINARY)[1]
+        image_gray = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2GRAY)
+        image_gray = cv2.threshold(image_gray, 200, 255, cv2.THRESH_BINARY)[1]
 
-            kernel = np.ones((5, 5), np.uint8)
-            image_gray = cv2.erode(image_gray, kernel, iterations=4)
-            
-            yellow_content = np.count_nonzero(image_gray) / (self.width * self.height)
+        kernel = np.ones((5, 5), np.uint8)
+        image_gray = cv2.erode(image_gray, kernel, iterations=4)
+        
+        bright_content = np.count_nonzero(image_gray) / (self.width * self.height)
 
-            if yellow_content >= 0.01:
-                failed = True
+        MAX_BRIGHTNESS = 0.01
+        if bright_content >= MAX_BRIGHTNESS:
+            return result.Err("failsafe", "yellow_check", f"Image discarded: Brightness/Yellow content is above {MAX_BRIGHTNESS} (Current: {bright_content})")
 
         # Save image
-        if not self.dry_run and not failed:
+        if not self.dry_run:
             self.log("Saving modified image...");
 
             os.makedirs(new_dir, exist_ok=True)
@@ -324,7 +377,7 @@ class QuadrantRecon:
             exif_bytes = piexif.dump(metadata)
             piexif.insert(exif_bytes, new_filename)
 
-        return -1 if failed else 0
+        return result.Ok()
 
 if __name__ == "__main__":
     qr = QuadrantRecon()

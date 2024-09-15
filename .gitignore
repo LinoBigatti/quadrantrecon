@@ -13,3 +13,5 @@ cropped_images/
 
 *.pth
 *.zip
+
+log.csv
