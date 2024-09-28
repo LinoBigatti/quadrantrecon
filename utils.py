@@ -35,6 +35,9 @@ class Result:
     def get_as_row(self):
         return [self.failed, self.filename, self.process, self.current_block, self.error_reason]
 
+    def get_headers():
+        return ["Failed", "Filename", "Process", "Execution Block", "Error"]
+
 
 class PlotUtils:
     def show_mask(mask, ax, random_color=False):

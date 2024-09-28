@@ -19,6 +19,8 @@ import matplotlib.pyplot as plt
 import piexif 
 import piexif.helper
 
+from tqdm import tqdm
+
 from utils import Result, PlotUtils
 
 class QuadrantRecon:
@@ -129,27 +131,36 @@ class QuadrantRecon:
     def main(self):
         self.create_predictor()
         
-        results = []
+        files = []
 
-        try:
-            for filename in self.filename:
-                if os.path.isfile(filename):
-                    results.append(self.process_image(filename))
-                
-                if os.path.isdir(filename):
-                    for root, folders, files in os.walk(filename):
-                        for file in files:
-                            if ".JPG" in file.upper() or ".JPEG" in file.upper() or ".PNG" in file.upper():
-                                results.append(self.process_image(os.path.join(root, file), filename))
-        except:
-            pass
-        finally:
-            with open("log.csv", "w", newline="") as f:
-                writer = csv.writer(f, delimiter = ";")
+        os.makedirs(self.output_path, exist_ok=True)
+        with open(os.path.join(self.output_path, "log.csv"), "w", newline="") as f:
+            writer = csv.writer(f, delimiter = ";")
 
-                for result in results:
+            writer.writerow(Result.get_headers())
+
+        for filename in self.filename:
+            if os.path.isfile(filename):
+                files.append((filename, ""))
+            
+            if os.path.isdir(filename):
+                for root, folders, _files in os.walk(filename):
+                    for file in _files:
+                        if ".JPG" in file.upper() or ".JPEG" in file.upper() or ".PNG" in file.upper():
+                            files.append((os.path.join(root, file), filename))
+
+        for file, top_folder in tqdm(files, disable=self.plot):
+            result = Result(file).Err("iteration", "before_processing", "result variable was not updated")
+
+            try:
+                result = self.process_image(file, top_folder)
+            except Exception as e:
+                result = Result(file).Err("iteration", "after_processing", f"Exception raised: {e}")
+            finally:
+                with open(os.path.join(self.output_path, "log.csv"), "a", newline="") as f:
+                    writer = csv.writer(f, delimiter = ";")
+
                     writer.writerow(result.get_as_row())
-
 
     def create_predictor(self):
         if self.plot and not "google.colab" in sys.modules:
@@ -165,7 +176,7 @@ class QuadrantRecon:
         self.log("Creating predictor...")
         self.predictor = SamPredictor(sam)
 
-    def process_image(self, filename: str, top_folder: str = ""):
+    def process_image(self, filename: str, top_folder: str = "") -> Result:
         result = Result(filename)
 
         if not self.predictor:
