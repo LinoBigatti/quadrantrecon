@@ -38,10 +38,17 @@ class QuadrantRecon:
         self.height = 1700
         self.padding_width = 45
         self.padding_height = 45
+        self.log_file = open("log.txt", "w")
+
+    def __del__(self):
+        # We need to close the file handle
+        self.log_file.close()
 
     def log(self, message: str = ""):
         if self.verbose:
             print(message)
+
+        self.log_file.write(message + "\n")
 
     def get_inner_bb(self, mask, img):
         result = Result("")
@@ -50,7 +57,12 @@ class QuadrantRecon:
         _mask = np.uint8(mask * 255)
 
         kernel = np.ones((25, 25), np.uint8)
-        _mask = cv2.erode(_mask, kernel, iterations=1)
+
+        # Opening (erotion followed by dilation) to get rid of small noise
+        _mask = cv2.morphologyEx(_mask, cv2.MORPH_OPEN, kernel)
+
+        # Closing( dilation followed by erotion) to close up holes in bigger objects
+        _mask = cv2.morphologyEx(_mask, cv2.MORPH_CLOSE, kernel)
 
         # Detect contours in object mask
         contours, _hierarchy = cv2.findContours(_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
@@ -132,23 +144,61 @@ class QuadrantRecon:
         self.create_predictor()
         
         files = []
+        _files = []
 
         os.makedirs(self.output_path, exist_ok=True)
+
         with open(os.path.join(self.output_path, "log.csv"), "w", newline="") as f:
             writer = csv.writer(f, delimiter = ";")
 
             writer.writerow(Result.get_headers())
 
+        # Collect filenames from all folders and subfolders listed in the arguments
         for filename in self.filename:
             if os.path.isfile(filename):
-                files.append((filename, ""))
+                _files.append((filename, ""))
             
             if os.path.isdir(filename):
-                for root, folders, _files in os.walk(filename):
-                    for file in _files:
+                for root, folders, inner_files in os.walk(filename):
+                    for file in inner_files:
                         if ".JPG" in file.upper() or ".JPEG" in file.upper() or ".PNG" in file.upper():
-                            files.append((os.path.join(root, file), filename))
+                            _files.append((os.path.join(root, file), filename))
 
+        # Filter input files
+        for file, top_folder in _files:
+            relative_path = os.path.relpath(file, top_folder)
+
+            new_dir = os.path.join(self.output_path, os.path.dirname(relative_path))
+
+            # Create output directory first
+            if not self.dry_run:
+                os.makedirs(new_dir, exist_ok=True)
+            
+            skip_file = False
+
+            metadata = piexif.load(file)
+            
+            # Prevent running quadrantrecon over already modified images
+            try:
+                user_comment = piexif.helper.UserComment.load(metadata["Exif"][piexif.ExifIFD.UserComment])
+
+                if "_quadrantrecon_marker" in user_comment and not self.force:
+                    self.log(f"Skipping {filename}: This image has already been modified by quadrantrecon.")
+
+                    skip_file = True
+            except Exception as e:
+                self.log(f"Exception loading user comment from file {file}: {e}")
+
+            # Prevent re-running quadrantrecon on already processed images
+            if os.path.isfile(filename) and not self.force:
+                self.log(f"Skipping {filename}: The output file already exists. Use --force to process it anyways.")
+
+                skip_file = True
+
+            if not skip_file:
+                files.append((file, top_folder))
+
+        # Process images
         for file, top_folder in tqdm(files, disable=self.plot):
             result = Result(file).Err("iteration", "before_processing", "result variable was not updated")
 
@@ -156,6 +206,8 @@ class QuadrantRecon:
                 result = self.process_image(file, top_folder)
             except Exception as e:
                 result = Result(file).Err("iteration", "after_processing", f"Exception raised: {e}")
+                
+                self.log("Encountered an error while processing file {file}: {e}")
             finally:
                 with open(os.path.join(self.output_path, "log.csv"), "a", newline="") as f:
                     writer = csv.writer(f, delimiter = ";")
@@ -193,28 +245,44 @@ class QuadrantRecon:
 
         new_filename = os.path.join(new_dir, os.path.basename(relative_path))
         
-        if os.path.isfile(new_filename) and not self.force:
-            self.log(f"Skipping {filename}: The output file already exists. Use --force to process it anyways.")
-
-            return result.Err("preprocessing", "check_output_file", "File skipped: Output file already exists")
-
         metadata = piexif.load(filename)
-
-        try:
-            user_comment = piexif.helper.UserComment.load(metadata["Exif"][piexif.ExifIFD.UserComment])
-
-            if "_quadrantrecon_marker" in user_comment and not self.force:
-                self.log(f"Skipping {filename}: This image has already been modified by quadrantrecon.")
-
-                return result.Err("preprocessing", "check_input_file", "File skipped: Input file was marked by quadrantrecon")
-        except:
-            pass
 
         self.log(f"Loading image from path {filename}...")
         image = cv2.imread(filename)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
         self.log("Image loaded.")
+
+        kernel = np.ones((9, 9), np.uint8)
+
+        bajo_amarillo = np.array([20, 50, 50], dtype=np.uint8)  # Hue 20° - High saturation and value
+        alto_amarillo = np.array([60, 255, 255], dtype=np.uint8)  # Hue 40° - Max saturation and value
+
+        # Create a mask to get yellow pixels
+        image_hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+        image_yellow = cv2.inRange(image_hsv, bajo_amarillo, alto_amarillo)
+
+        # Opening (erotion followed by dilation) to get rid of small noise
+        image_yellow = cv2.morphologyEx(image_yellow, cv2.MORPH_OPEN, kernel)
+
+        # Closing( dilation followed by erotion) to close up holes in bigger objects
+        image_yellow = cv2.morphologyEx(image_yellow, cv2.MORPH_CLOSE, kernel)
+
+        if self.plot and self.verbose:
+            self.log("Plotting yellow image...")
+
+            plt.figure(figsize=(10,10))
+            plt.imshow(image_yellow)
+
+            plt.axis('on')
+            plt.show()
+
+        yellow_coords = np.column_stack(np.where(image_yellow > 0))
+
+        random_indexes = np.random.choice(len(yellow_coords), 10, replace=False)
+        print(random_indexes)
+        random_coords = yellow_coords[random_indexes]
+        print(random_coords)
 
         self.log("Setting predictor image...")
         self.predictor.set_image(image)
@@ -224,14 +292,8 @@ class QuadrantRecon:
         input_box = np.array([0, 200, 4000, 3000])
 
         # Set inner background points to remove objects from the inside
-        input_points = np.array([
-            [1300, 1250], [1650, 1250], [2000, 1250], [2350, 1250], [2700, 1250],
-            [1300, 1500], [1650, 1500], [2000, 1500], [2350, 1500], [2700, 1500],
-            [1300, 1750], [1650, 1750], [2000, 1750], [2350, 1750], [2700, 1750],
-            [1300, 2000], [1650, 2000], [2000, 2000], [2350, 2000], [2700, 2000],
-            [1300, 2250], [1650, 2250], [2000, 2250], [2350, 2250], [2700, 2250],
-        ])
-        input_labels = np.array([0] * len(input_points))
+        input_points = np.array(list([[x, y] for y, x in random_coords]))
+        input_labels = np.array([1] * len(input_points))
         
         try:
             if self.plot and self.verbose:
@@ -247,7 +309,7 @@ class QuadrantRecon:
                 plt.axis('on')
                 plt.show()
         except Exception as e:
-            print(e)
+            self.log(f"Exception encountered while plotting image: {e}")
 
         self.log("Predicting...")
         masks, scores, _ = self.predictor.predict(
@@ -326,8 +388,6 @@ class QuadrantRecon:
         # Save image
         if not self.dry_run:
             self.log("Saving modified image...");
-
-            os.makedirs(new_dir, exist_ok=True)
 
             image_cropped = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2BGR)
             cv2.imwrite(new_filename, image_cropped);
