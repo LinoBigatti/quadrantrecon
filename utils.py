@@ -38,6 +38,9 @@ class Result:
     def get_headers():
         return ["Failed", "Filename", "Process", "Execution Block", "Error"]
 
+    def __str__(self):
+        return f"{self.filename}: {'Err: ' + self.error_reason if self.failed else 'Ok'}"
+
 
 class PlotUtils:
     def show_mask(mask, ax, random_color=False):

@@ -147,11 +147,13 @@ class QuadrantRecon:
         _files = []
 
         os.makedirs(self.output_path, exist_ok=True)
+        log_table = os.path.join(self.output_path, "log.csv")
+        
+        if not os.path.exists(log_table):
+            with open(log_table, "w", newline="") as f:
+                writer = csv.writer(f, delimiter = ";")
 
-        with open(os.path.join(self.output_path, "log.csv"), "w", newline="") as f:
-            writer = csv.writer(f, delimiter = ";")
-
-            writer.writerow(Result.get_headers())
+                writer.writerow(Result.get_headers())
 
         # Collect filenames from all folders and subfolders listed in the arguments
         for filename in self.filename:
@@ -170,6 +172,8 @@ class QuadrantRecon:
 
             new_dir = os.path.join(self.output_path, os.path.dirname(relative_path))
 
+            new_filename = os.path.join(new_dir, os.path.basename(relative_path))
+
             # Create output directory first
             if not self.dry_run:
                 os.makedirs(new_dir, exist_ok=True)
@@ -187,11 +191,12 @@ class QuadrantRecon:
 
                     skip_file = True
             except Exception as e:
-                self.log(f"Exception loading user comment from file {file}: {e}")
+                pass
+                #self.log(f"Exception loading user comment from file {file}: {e}")
 
             # Prevent re-running quadrantrecon on already processed images
-            if os.path.isfile(filename) and not self.force:
-                self.log(f"Skipping {filename}: The output file already exists. Use --force to process it anyways.")
+            if os.path.isfile(new_filename) and not self.force:
+                self.log(f"Skipping {new_filename}: The output file already exists. Use --force to process it anyways.")
 
                 skip_file = True
 
@@ -209,6 +214,8 @@ class QuadrantRecon:
                 
                 self.log("Encountered an error while processing file {file}: {e}")
             finally:
+                print(result)
+
                 with open(os.path.join(self.output_path, "log.csv"), "a", newline="") as f:
                     writer = csv.writer(f, delimiter = ";")
 
@@ -381,7 +388,7 @@ class QuadrantRecon:
         
         bright_content = np.count_nonzero(image_gray) / (self.width * self.height)
 
-        MAX_BRIGHTNESS = 0.01
+        MAX_BRIGHTNESS = 0.03
         if bright_content >= MAX_BRIGHTNESS:
             return result.Err("failsafe", "yellow_check", f"Image discarded: Brightness/Yellow content is above {MAX_BRIGHTNESS} (Current: {bright_content})")
 
