@@ -75,6 +75,7 @@ class QuadrantRecon:
             return [0, 0, 0, 0], result.Err("bb_cropping", "contour_detection", "Bounding Box detection failed: No contours were detected.")
 
         cnt = cnts[0]
+        print(f"{cnt=}")
         
         # Heuristic: If the contour length is too small, its probably not the right object.
         MIN_CNT_LEN = 6000
@@ -114,9 +115,11 @@ class QuadrantRecon:
 
         # Heuristic: Most images need to be cropped near a certain X region. Fails if its outside as a safeguard.
         MIN_X = 900
-        MAX_X = 1200
-        if x < MIN_X or x > MAX_X:
-            result = result.Err("bb_cropping", "x_region_check", f"Bounding Box detection failed: Expected X between {MIN_X} and {MAX_X} (Current X: {x}, current y: {y})")
+        MAX_X = 1250
+        #if x < MIN_X or x > MAX_X:
+            #result = result.Err("bb_cropping", "x_region_check", f"Bounding Box detection failed: Expected X between {MIN_X} and {MAX_X} (Current X: {x}, current y: {y})")
+        print(f"{x=}")
+        print(f"{y=}")
 
         if self.plot and self.verbose:
             self.log("Plotting detected corners and inner contour...")
@@ -212,7 +215,7 @@ class QuadrantRecon:
             except Exception as e:
                 result = Result(file).Err("iteration", "after_processing", f"Exception raised: {e}")
                 
-                self.log("Encountered an error while processing file {file}: {e}")
+                self.log(f"Encountered an error while processing file {file}: {e}")
             finally:
                 print(result)
 
@@ -260,7 +263,16 @@ class QuadrantRecon:
         
         self.log("Image loaded.")
 
-        kernel = np.ones((9, 9), np.uint8)
+        if self.plot and self.verbose:
+            self.log("Plotting loaded image...")
+
+            plt.figure(figsize=(10,10))
+            plt.imshow(image)
+
+            plt.axis('on')
+            plt.show()
+
+        kernel = np.ones((25, 25), np.uint8)
 
         bajo_amarillo = np.array([20, 50, 50], dtype=np.uint8)  # Hue 20° - High saturation and value
         alto_amarillo = np.array([60, 255, 255], dtype=np.uint8)  # Hue 40° - Max saturation and value
@@ -388,7 +400,7 @@ class QuadrantRecon:
         
         bright_content = np.count_nonzero(image_gray) / (self.width * self.height)
 
-        MAX_BRIGHTNESS = 0.03
+        MAX_BRIGHTNESS = 0.06
         if bright_content >= MAX_BRIGHTNESS:
             return result.Err("failsafe", "yellow_check", f"Image discarded: Brightness/Yellow content is above {MAX_BRIGHTNESS} (Current: {bright_content})")
 
