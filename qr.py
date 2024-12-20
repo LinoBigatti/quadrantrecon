@@ -19,9 +19,13 @@ import matplotlib.pyplot as plt
 import piexif 
 import piexif.helper
 
+from get_image_size import get_image_size
+
 from tqdm import tqdm
 
 from utils import Result, PlotUtils
+
+type BoundingBox = list[int, int, int, int]
 
 class QuadrantRecon:
     def __init__(self):
@@ -50,7 +54,20 @@ class QuadrantRecon:
 
         self.log_file.write(message + "\n")
 
-    def get_inner_bb(self, mask, img):
+    def get_new_filename(self, file: str, top_folder: str) -> str:
+        relative_path = os.path.relpath(file, top_folder)
+
+        new_dir = os.path.join(self.output_path, os.path.dirname(relative_path))
+
+        new_filename = os.path.join(new_dir, os.path.basename(relative_path))
+
+        # Create output directory first
+        if not self.dry_run:
+            os.makedirs(new_dir, exist_ok=True)
+
+        return new_filename
+
+    def get_inner_bb(self, mask, img) -> (BoundingBox, Result):
         result = Result("")
 
         # Remove imperfections from mask
@@ -75,7 +92,6 @@ class QuadrantRecon:
             return [0, 0, 0, 0], result.Err("bb_cropping", "contour_detection", "Bounding Box detection failed: No contours were detected.")
 
         cnt = cnts[0]
-        print(f"{cnt=}")
         
         # Heuristic: If the contour length is too small, its probably not the right object.
         MIN_CNT_LEN = 6000
@@ -118,8 +134,6 @@ class QuadrantRecon:
         MAX_X = 1250
         #if x < MIN_X or x > MAX_X:
             #result = result.Err("bb_cropping", "x_region_check", f"Bounding Box detection failed: Expected X between {MIN_X} and {MAX_X} (Current X: {x}, current y: {y})")
-        print(f"{x=}")
-        print(f"{y=}")
 
         if self.plot and self.verbose:
             self.log("Plotting detected corners and inner contour...")
@@ -146,7 +160,7 @@ class QuadrantRecon:
     def main(self):
         self.create_predictor()
         
-        files = []
+        files = {}
         _files = []
 
         os.makedirs(self.output_path, exist_ok=True)
@@ -170,27 +184,28 @@ class QuadrantRecon:
                             _files.append((os.path.join(root, file), filename))
 
         # Filter input files
-        for file, top_folder in _files:
-            relative_path = os.path.relpath(file, top_folder)
-
-            new_dir = os.path.join(self.output_path, os.path.dirname(relative_path))
-
-            new_filename = os.path.join(new_dir, os.path.basename(relative_path))
-
-            # Create output directory first
-            if not self.dry_run:
-                os.makedirs(new_dir, exist_ok=True)
+        for file, top_folder in tqdm(_files):
+            new_filename = self.get_new_filename(file, top_folder)
+            relative_path = os.path.dirname(file)
             
             skip_file = False
 
             metadata = piexif.load(file)
+
+            width, height = get_image_size(file)
+
+            # Prevent running quadrantrecon on unrecognized images
+            if width != 4000 or height != 3000:
+                self.log(f"Skipping {file}: This image has a resolution of {width}x{height} (Needed 4000x3000).")
+
+                skip_file = True
             
             # Prevent running quadrantrecon over already modified images
             try:
                 user_comment = piexif.helper.UserComment.load(metadata["Exif"][piexif.ExifIFD.UserComment])
 
                 if "_quadrantrecon_marker" in user_comment and not self.force:
-                    self.log(f"Skipping {filename}: This image has already been modified by quadrantrecon.")
+                    self.log(f"Skipping {file}: This image has already been modified by quadrantrecon.")
 
                     skip_file = True
             except Exception as e:
@@ -204,21 +219,73 @@ class QuadrantRecon:
                 skip_file = True
 
             if not skip_file:
-                files.append((file, top_folder))
+                if not relative_path in files:
+                    files[relative_path] = []
+
+                files[relative_path].append((file, top_folder))
 
         # Process images
-        for file, top_folder in tqdm(files, disable=self.plot):
+        for rel_folder in tqdm(files.keys()):
             result = Result(file).Err("iteration", "before_processing", "result variable was not updated")
 
+            original_images = {}
+
+            # Blend images
+            blending_fraction = 1.0 / len(files[rel_folder])
+            blended_image = np.zeros_like(cv2.imread(files[rel_folder][0][0]))
+            
+            self.log("Starting blending input images.")
+            for file, _ in tqdm(files[rel_folder], leave=False):
+                img = cv2.imread(file)
+                original_images[file] = img
+
+                if img.shape[:2] != (3000, 4000):
+                    continue
+
+                blended_image = blended_image + img * blending_fraction
+
+            blended_image = np.ndarray.astype(blended_image, np.uint8)
+
+            self.log("Finished blending input images.")
+                
             try:
-                result = self.process_image(file, top_folder)
+                self.log(f"Loading image from path {filename}...")
+                image = cv2.cvtColor(blended_image, cv2.COLOR_BGR2RGB)
+        
+                self.log("Image loaded.")
+
+                bb, result = self.process_image_no_load(image, files[rel_folder][0][0], files[rel_folder][0][1])
+                
+                for file, top_folder in files[rel_folder]:
+                    original_image = original_images[file]
+
+                    # Crop image
+                    image_cropped = original_image[bb[1]:bb[3], bb[0]:bb[2]]
+
+                    # Save image
+                    if not self.dry_run:
+                        new_filename = self.get_new_filename(file, top_folder)
+
+                        self.log("Saving modified image...");
+
+                        cv2.imwrite(new_filename, image_cropped);
+
+                        self.log("Writing metadata...")
+                        
+                        user_comment = piexif.helper.UserComment.dump("_quadrantrecon_marker/" + os.path.dirname(relative_path))
+
+                        metadata["0th"][piexif.ImageIFD.XResolution] = (self.width, 1)
+                        metadata["0th"][piexif.ImageIFD.YResolution] = (self.height, 1)
+
+                        metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
+
+                        exif_bytes = piexif.dump(metadata)
+                        piexif.insert(exif_bytes, new_filename)
             except Exception as e:
                 result = Result(file).Err("iteration", "after_processing", f"Exception raised: {e}")
                 
                 self.log(f"Encountered an error while processing file {file}: {e}")
             finally:
-                print(result)
-
                 with open(os.path.join(self.output_path, "log.csv"), "a", newline="") as f:
                     writer = csv.writer(f, delimiter = ";")
 
@@ -238,36 +305,59 @@ class QuadrantRecon:
         self.log("Creating predictor...")
         self.predictor = SamPredictor(sam)
 
-    def process_image(self, filename: str, top_folder: str = "") -> Result:
-        result = Result(filename)
-
-        if not self.predictor:
-            print("ERROR: Must load a predictor using create_predictor() first.")
-
-            exit()
-        
-        if not top_folder:
-            top_folder = os.path.dirname(filename)
-        
-        relative_path = os.path.relpath(filename, top_folder)
-
-        new_dir = os.path.join(self.output_path, os.path.dirname(relative_path))
-
-        new_filename = os.path.join(new_dir, os.path.basename(relative_path))
-        
-        metadata = piexif.load(filename)
-
+    def process_image(self, filename: str, top_foldert: str = "") -> Result:
         self.log(f"Loading image from path {filename}...")
         image = cv2.imread(filename)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
         self.log("Image loaded.")
 
+        bb, result = self.process_image(image, filename, top_folder)
+
+        # Crop image
+        image_cropped = image[bb[1]:bb[3], bb[0]:bb[2]]
+
+        # Save image
+        if not self.dry_run:
+            new_filename = self.get_new_filename(filename, top_folder)
+
+            self.log("Saving modified image...");
+
+            image_cropped = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(new_filename, image_cropped);
+
+            self.log("Writing metadata...")
+            
+            user_comment = piexif.helper.UserComment.dump("_quadrantrecon_marker/" + os.path.dirname(relative_path))
+
+            metadata["0th"][piexif.ImageIFD.XResolution] = (self.width, 1)
+            metadata["0th"][piexif.ImageIFD.YResolution] = (self.height, 1)
+
+            metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
+
+            exif_bytes = piexif.dump(metadata)
+            piexif.insert(exif_bytes, new_filename)
+
+    def process_image_no_load(self, image_rgb, filename: str, top_folder: str = "") -> (BoundingBox, Result):
+        result = Result(filename)
+        
+        if not self.predictor:
+            print("ERROR: Must load a predictor using create_predictor() first.")
+
+            exit()
+        
+        new_filename = self.get_new_filename(filename, top_folder)
+
+        if not top_folder:
+            top_folder = os.path.dirname(filename)
+        
+        metadata = piexif.load(filename)
+
         if self.plot and self.verbose:
             self.log("Plotting loaded image...")
 
             plt.figure(figsize=(10,10))
-            plt.imshow(image)
+            plt.imshow(image_rgb)
 
             plt.axis('on')
             plt.show()
@@ -278,7 +368,7 @@ class QuadrantRecon:
         alto_amarillo = np.array([60, 255, 255], dtype=np.uint8)  # Hue 40° - Max saturation and value
 
         # Create a mask to get yellow pixels
-        image_hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+        image_hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
         image_yellow = cv2.inRange(image_hsv, bajo_amarillo, alto_amarillo)
 
         # Opening (erotion followed by dilation) to get rid of small noise
@@ -299,18 +389,13 @@ class QuadrantRecon:
         yellow_coords = np.column_stack(np.where(image_yellow > 0))
 
         random_indexes = np.random.choice(len(yellow_coords), 10, replace=False)
-        print(random_indexes)
         random_coords = yellow_coords[random_indexes]
-        print(random_coords)
 
         self.log("Setting predictor image...")
-        self.predictor.set_image(image)
+        self.predictor.set_image(image_rgb)
         self.log("Predictor loaded")
 
-        # Set box to find objects inside
-        input_box = np.array([0, 200, 4000, 3000])
-
-        # Set inner background points to remove objects from the inside
+        # Set random inner object points based on previous mask
         input_points = np.array(list([[x, y] for y, x in random_coords]))
         input_labels = np.array([1] * len(input_points))
         
@@ -319,9 +404,7 @@ class QuadrantRecon:
                 self.log("Plotting loaded image...")
 
                 plt.figure(figsize=(10,10))
-                plt.imshow(image)
-
-                PlotUtils.show_box(input_box, plt.gca())
+                plt.imshow(image_rgb)
 
                 PlotUtils.show_points(input_points, input_labels, plt.gca())
 
@@ -334,7 +417,6 @@ class QuadrantRecon:
         masks, scores, _ = self.predictor.predict(
             point_coords=input_points,
             point_labels=input_labels,
-            box=input_box[None, :],
             multimask_output=True,
         )
 
@@ -346,7 +428,7 @@ class QuadrantRecon:
             self.log("Plotting prediction...")
 
             plt.figure(figsize=(10, 10))
-            plt.imshow(image)
+            plt.imshow(image_rgb)
 
             PlotUtils.show_mask(mask, plt.gca())
 
@@ -356,13 +438,13 @@ class QuadrantRecon:
         
         self.log("Searching for inner bounding box...")
 
-        bb, bb_result = self.get_inner_bb(mask, image.copy())
+        bb, bb_result = self.get_inner_bb(mask, image_rgb.copy())
 
         if self.plot:
             self.log("Plotting inner bounding box for predicted mask...")
 
             plt.figure(figsize=(10, 10))
-            plt.imshow(image)
+            plt.imshow(image_rgb)
 
             PlotUtils.show_mask(mask, plt.gca())
 
@@ -373,7 +455,7 @@ class QuadrantRecon:
             plt.show()
 
         # Crop image
-        image_cropped = image[bb[1]:bb[3], bb[0]:bb[2]]
+        image_cropped = image_rgb[bb[1]:bb[3], bb[0]:bb[2]]
 
         if self.plot and self.verbose:
             plt.figure(figsize=(10, 10))
@@ -383,14 +465,14 @@ class QuadrantRecon:
             plt.show()  
 
         if bb_result.failed:
-            return result.copy_from(bb_result)
+            return bb, result.copy_from(bb_result)
         
         # If the cropped size is wrong, we ran into a corner or side.
         cropped_width = np.shape(image_cropped)[0]
         cropped_height = np.shape(image_cropped)[1]
 
         if cropped_width != self.width or cropped_height != self.height:
-            return result.Err("failsafe", "bounds_check", "Image discarded: Cropped width and height are different than expected")
+            return bb, result.Err("failsafe", "bounds_check", "Image discarded: Cropped width and height are different than expected")
 
         image_gray = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2GRAY)
         image_gray = cv2.threshold(image_gray, 200, 255, cv2.THRESH_BINARY)[1]
@@ -402,25 +484,6 @@ class QuadrantRecon:
 
         MAX_BRIGHTNESS = 0.06
         if bright_content >= MAX_BRIGHTNESS:
-            return result.Err("failsafe", "yellow_check", f"Image discarded: Brightness/Yellow content is above {MAX_BRIGHTNESS} (Current: {bright_content})")
+            return bb, result.Err("failsafe", "yellow_check", f"Image discarded: Brightness/Yellow content is above {MAX_BRIGHTNESS} (Current: {bright_content})")
 
-        # Save image
-        if not self.dry_run:
-            self.log("Saving modified image...");
-
-            image_cropped = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(new_filename, image_cropped);
-
-            self.log("Writing metadata...")
-            
-            user_comment = piexif.helper.UserComment.dump("_quadrantrecon_marker/" + os.path.dirname(relative_path))
-
-            metadata["0th"][piexif.ImageIFD.XResolution] = (self.width, 1)
-            metadata["0th"][piexif.ImageIFD.YResolution] = (self.height, 1)
-
-            metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
-
-            exif_bytes = piexif.dump(metadata)
-            piexif.insert(exif_bytes, new_filename)
-
-        return result.Ok()
+        return bb, result.Ok()
