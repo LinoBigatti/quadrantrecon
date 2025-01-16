@@ -25,7 +25,9 @@ from tqdm import tqdm
 
 from utils import Result, PlotUtils
 
-type BoundingBox = list[int, int, int, int]
+from typing import List
+
+BoundingBox = List[int]
 
 class QuadrantRecon:
     def __init__(self):
