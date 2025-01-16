@@ -196,6 +196,8 @@ class QuadrantRecon:
         _files = []
         individual_files = []
 
+        results = []
+
         os.makedirs(self.output_path, exist_ok=True)
         log_table = os.path.join(self.output_path, "log.csv")
         
@@ -274,14 +276,15 @@ class QuadrantRecon:
                 
                 self.log(f"Encountered an error while processing file {file}: {e}")
             finally:
+                results.append(result)
+
                 with open(os.path.join(self.output_path, "log.csv"), "a", newline="") as f:
                     writer = csv.writer(f, delimiter = ";")
 
                     writer.writerow(result.get_as_row())
 
         if not files:
-            print("SASDAS")
-            return
+            return results
 
         # Process batch images
         for rel_folder in tqdm(files.keys()):
@@ -346,10 +349,15 @@ class QuadrantRecon:
                 
                 self.log(f"Encountered an error while processing file {file}: {e}")
             finally:
+                results.append(result)
+
                 with open(os.path.join(self.output_path, "log.csv"), "a", newline="") as f:
                     writer = csv.writer(f, delimiter = ";")
 
                     writer.writerow(result.get_as_row())
+
+
+        return results
 
     def create_predictor(self):
         if self.plot and not "google.colab" in sys.modules:
