@@ -54,6 +54,38 @@ class QuadrantRecon:
 
         self.log_file.write(message + "\n")
 
+    def imread(self, path):
+        img = cv2.imread(path)
+        metadata = piexif.load(path)
+
+        if not piexif.ImageIFD.Orientation in metadata["0th"]:
+            return img
+
+        # Correct image orientation before opening.
+        orientation = metadata["0th"][piexif.ImageIFD.Orientation]
+        print(orientation)
+
+        
+        if orientation == 2:
+            img = cv2.flip(img, 1)
+        elif orientation == 3:
+            img = cv2.rotate(img, cv2.ROTATE_180)
+        elif orientation == 4:
+            img = cv2.rotate(img, cv2.ROTATE_180)
+            img = cv2.flip(img, 1)
+        elif orientation == 5:
+            img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            img = cv2.flip(img, 1)
+        elif orientation == 6:
+            img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        elif orientation == 7:
+            img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+            img = cv2.flip(img, 1)
+        elif orientation == 8:
+            img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+
+        return img
+
     def get_new_filename(self, file: str, top_folder: str) -> str:
         relative_path = os.path.relpath(file, top_folder)
 
@@ -162,6 +194,7 @@ class QuadrantRecon:
         
         files = {}
         _files = []
+        individual_files = []
 
         os.makedirs(self.output_path, exist_ok=True)
         log_table = os.path.join(self.output_path, "log.csv")
@@ -185,6 +218,9 @@ class QuadrantRecon:
 
         # Filter input files
         for file, top_folder in tqdm(_files):
+            is_individual_file = not top_folder
+            top_folder = top_folder if not is_individual_file else os.path.dirname(file)
+
             new_filename = self.get_new_filename(file, top_folder)
             relative_path = os.path.dirname(file)
             
@@ -219,24 +255,48 @@ class QuadrantRecon:
                 skip_file = True
 
             if not skip_file:
-                if not relative_path in files:
-                    files[relative_path] = []
+                if is_individual_file:
+                    individual_files.append((file, top_folder))
+                else:
+                    if not relative_path in files:
+                        files[relative_path] = []
 
-                files[relative_path].append((file, top_folder))
+                    files[relative_path].append((file, top_folder))
 
         # Process images
+        for file, top_folder in individual_files:
+            result = Result(file).Err("iteration", "before_processing", "result variable was not updated")
+
+            try:
+                result = self.process_image(file, top_folder)
+            except Exception as e:
+                result = Result(file).Err("iteration", "after_processing", f"Exception raised: {e}")
+                
+                self.log(f"Encountered an error while processing file {file}: {e}")
+            finally:
+                with open(os.path.join(self.output_path, "log.csv"), "a", newline="") as f:
+                    writer = csv.writer(f, delimiter = ";")
+
+                    writer.writerow(result.get_as_row())
+
+        if not files:
+            print("SASDAS")
+            return
+
+        # Process batch images
         for rel_folder in tqdm(files.keys()):
+            print(rel_folder)
             result = Result(file).Err("iteration", "before_processing", "result variable was not updated")
 
             original_images = {}
 
             # Blend images
             blending_fraction = 1.0 / len(files[rel_folder])
-            blended_image = np.zeros_like(cv2.imread(files[rel_folder][0][0]))
+            blended_image = np.zeros_like(self.imread(files[rel_folder][0][0]))
             
             self.log("Starting blending input images.")
             for file, _ in tqdm(files[rel_folder], leave=False):
-                img = cv2.imread(file)
+                img = self.imread(file)
                 original_images[file] = img
 
                 if img.shape[:2] != (3000, 4000):
@@ -254,7 +314,7 @@ class QuadrantRecon:
         
                 self.log("Image loaded.")
 
-                bb, result = self.process_image_no_load(image, files[rel_folder][0][0], files[rel_folder][0][1])
+                bb, result = self.process_image_no_load(image, files[rel_folder][0][0], files[rel_folder][0][1], True)
                 
                 for file, top_folder in files[rel_folder]:
                     original_image = original_images[file]
@@ -305,14 +365,16 @@ class QuadrantRecon:
         self.log("Creating predictor...")
         self.predictor = SamPredictor(sam)
 
-    def process_image(self, filename: str, top_foldert: str = "") -> Result:
+    def process_image(self, filename: str, top_folder: str = "") -> Result:
         self.log(f"Loading image from path {filename}...")
-        image = cv2.imread(filename)
+        image = self.imread(filename)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        metadata = piexif.load(filename)
         
         self.log("Image loaded.")
 
-        bb, result = self.process_image(image, filename, top_folder)
+        bb, result = self.process_image_no_load(image, filename, top_folder)
 
         # Crop image
         image_cropped = image[bb[1]:bb[3], bb[0]:bb[2]]
@@ -328,6 +390,7 @@ class QuadrantRecon:
 
             self.log("Writing metadata...")
             
+            relative_path = os.path.relpath(filename, top_folder)
             user_comment = piexif.helper.UserComment.dump("_quadrantrecon_marker/" + os.path.dirname(relative_path))
 
             metadata["0th"][piexif.ImageIFD.XResolution] = (self.width, 1)
@@ -338,7 +401,9 @@ class QuadrantRecon:
             exif_bytes = piexif.dump(metadata)
             piexif.insert(exif_bytes, new_filename)
 
-    def process_image_no_load(self, image_rgb, filename: str, top_folder: str = "") -> (BoundingBox, Result):
+        return result
+
+    def process_image_no_load(self, image_rgb, filename: str, top_folder: str = "", batch: bool = False) -> (BoundingBox, Result):
         result = Result(filename)
         
         if not self.predictor:
@@ -364,12 +429,25 @@ class QuadrantRecon:
 
         kernel = np.ones((25, 25), np.uint8)
 
-        bajo_amarillo = np.array([20, 50, 50], dtype=np.uint8)  # Hue 20° - High saturation and value
-        alto_amarillo = np.array([60, 255, 255], dtype=np.uint8)  # Hue 40° - Max saturation and value
+        image_yellow = None
 
-        # Create a mask to get yellow pixels
-        image_hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
-        image_yellow = cv2.inRange(image_hsv, bajo_amarillo, alto_amarillo)
+        if batch:
+            # Create a mask to get bright pixels (Backgrounds in blended pictures are mostly dark grey)
+            image_gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+
+            image_yellow = cv2.inRange(image_gray, 150, 255)
+        else:
+            bajo_amarillo = np.array([20, 50, 50], dtype=np.uint8)  # Hue 20° - High saturation and value
+            alto_amarillo = np.array([60, 255, 255], dtype=np.uint8)  # Hue 60° - Max saturation and value
+
+            # Create a mask to get yellow pixels
+            image_hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
+            image_yellow = cv2.inRange(image_hsv, bajo_amarillo, alto_amarillo)
+
+        # Clear the sides of the image, leaving only the center
+        for y in range(0, 3000):
+            image_yellow[y][0:700] = [0]
+            image_yellow[y][-700:-1] = [0]
 
         # Opening (erotion followed by dilation) to get rid of small noise
         image_yellow = cv2.morphologyEx(image_yellow, cv2.MORPH_OPEN, kernel)
