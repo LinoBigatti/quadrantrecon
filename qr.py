@@ -1,8 +1,10 @@
 import os
 import sys
 import csv
+import multiprocessing
 
 from itertools import islice, chain
+from typing import List
 from math import sqrt
 
 sys.path.append("sam/")
@@ -25,8 +27,6 @@ from tqdm import tqdm
 
 from utils import Result, PlotUtils
 
-from typing import List
-
 BoundingBox = List[int]
 
 class QuadrantRecon:
@@ -40,6 +40,7 @@ class QuadrantRecon:
         self.device = "cuda"
         self.model_path = "sam_vit_h.pth"
         self.model_type = "vit_h"
+        self.threads = 16
         self.image_width = 4000
         self.image_height = 3000
         self.cropped_width = 1700
@@ -62,6 +63,9 @@ class QuadrantRecon:
 
         self.log_file.write(message + "\n")
 
+    def imread(self, path):
+        return imread_correcting_rotation(path)
+
     def plot_image(self, image, message: str = ""):
         if self.plot:
             self.log(f"Plotting{' ' + message if message else ''}...")
@@ -71,36 +75,6 @@ class QuadrantRecon:
 
             plt.axis('on')
             plt.show()
-
-    def imread(self, path):
-        img = cv2.imread(path)
-        metadata = piexif.load(path)
-
-        if not piexif.ImageIFD.Orientation in metadata["0th"]:
-            return img
-
-        # Correct image orientation before opening.
-        orientation = metadata["0th"][piexif.ImageIFD.Orientation]
-        
-        if orientation == 2:
-            img = cv2.flip(img, 1)
-        elif orientation == 3:
-            img = cv2.rotate(img, cv2.ROTATE_180)
-        elif orientation == 4:
-            img = cv2.rotate(img, cv2.ROTATE_180)
-            img = cv2.flip(img, 1)
-        elif orientation == 5:
-            img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            img = cv2.flip(img, 1)
-        elif orientation == 6:
-            img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
-        elif orientation == 7:
-            img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-            img = cv2.flip(img, 1)
-        elif orientation == 8:
-            img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-
-        return img
 
     def get_new_filename(self, file: str, top_folder: str) -> str:
         relative_path = os.path.relpath(file, top_folder)
@@ -306,23 +280,25 @@ class QuadrantRecon:
         for rel_folder in tqdm(files.keys()):
             result = Result(file).Err("iteration", "before_processing", "result variable was not updated")
 
-            original_images = {}
-
             # Blend images
             blending_fraction = 1.0 / len(files[rel_folder])
             blended_image = np.zeros_like(self.imread(files[rel_folder][0][0]))
             
+            original_images = {}
+
             self.log("Starting blending input images.")
-            for file, _ in tqdm(files[rel_folder], leave=False):
-                img = self.imread(file)
-                original_images[file] = img
+            with multiprocessing.Manager() as manager:
+                _original_images = manager.dict()
 
-                if img.shape[:2] != (self.image_height, self.image_width):
-                    continue
+                args = [(file, _original_images, blending_fraction, self.image_width, self.image_height) for file, _ in files[rel_folder]]
+                
+                with multiprocessing.Pool(self.threads) as pool:
+                    results = pool.starmap(_load_image_for_blending, args)
+                    
+                    blended_image = sum(results)
 
-                # Convert to uint8 after each blending pass, because if we use floats the range should be from 0.0 to 1.0
-                blended_image = np.ndarray.astype(blended_image + img * blending_fraction, np.uint8)
-
+                original_images = {key: _original_images[key] for key in _original_images.keys()}
+        
             self.log("Finished blending input images.")
                 
             try:
@@ -333,6 +309,7 @@ class QuadrantRecon:
 
                 bb, result = self.process_image_no_load(image, files[rel_folder][0][0], files[rel_folder][0][1], True)
                 
+                print(result)
                 for file, top_folder in files[rel_folder]:
                     original_image = original_images[file]
 
@@ -340,7 +317,12 @@ class QuadrantRecon:
                     image_cropped = original_image[bb[1]:bb[3], bb[0]:bb[2]]
 
                     # Save image
-                    if not self.dry_run:
+                    if not self.dry_run and not result.failed:
+                        if image_cropped.size == 0:
+                            self.log(f"WARNING: Tried to write an empty image for file {file}")
+
+                            continue
+
                         new_filename = self.get_new_filename(file, top_folder)
 
                         self.log("Saving modified image...");
@@ -402,7 +384,7 @@ class QuadrantRecon:
         image_cropped = image[bb[1]:bb[3], bb[0]:bb[2]]
 
         # Save image
-        if not self.dry_run:
+        if not self.dry_run and not result.failed:
             new_filename = self.get_new_filename(filename, top_folder)
 
             self.log("Saving modified image...");
@@ -578,3 +560,48 @@ class QuadrantRecon:
             return bb, result.Err("failsafe", "yellow_check", f"Image discarded: Brightness/Yellow content is above {MAX_BRIGHTNESS} (Current: {bright_content})")
 
         return bb, result.Ok()
+
+def imread_correcting_rotation(path):
+    img = cv2.imread(path)
+    metadata = piexif.load(path)
+
+    if not piexif.ImageIFD.Orientation in metadata["0th"]:
+        return img
+
+    # Correct image orientation before opening.
+    orientation = metadata["0th"][piexif.ImageIFD.Orientation]
+    
+    if orientation == 2:
+        img = cv2.flip(img, 1)
+    elif orientation == 3:
+        img = cv2.rotate(img, cv2.ROTATE_180)
+    elif orientation == 4:
+        img = cv2.rotate(img, cv2.ROTATE_180)
+        img = cv2.flip(img, 1)
+    elif orientation == 5:
+        img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        img = cv2.flip(img, 1)
+    elif orientation == 6:
+        img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    elif orientation == 7:
+        img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+        img = cv2.flip(img, 1)
+    elif orientation == 8:
+        img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+
+    return img
+
+# Loads an image and multiplies it by its blending factor.
+def _load_image_for_blending(file, original_images, blending_fraction, image_width, image_height):
+    img = imread_correcting_rotation(file)
+    original_images[file] = img
+
+    # Extra failsafe for rotated/weird images
+    height, width = img.shape[:2]
+    if (width, height) != (image_width, image_height):
+        print(f"WARNING: Skipping blending {file}: This image has a resolution of {width}x{height} (Needed {image_width}x{image_height}).")
+
+        return
+
+    # Convert to uint8 after each blending pass, because if we use floats the range should be from 0.0 to 1.0
+    return np.ndarray.astype(img * blending_fraction, np.uint8)

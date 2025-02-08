@@ -37,6 +37,10 @@ if __name__ == "__main__":
     parser.add_argument("--model-type",
                         help="type of sam model that is being loaded (default: %(default)s)",
                         default=qr.model_type)
+    parser.add_argument("-j", "--threads",
+                        help="number of threads to use for loading files (default: %(default))",
+                        type=int,
+                        default=qr.threads)
     parser.add_argument("--width",
                         help="width of the cropped area, in pixels (default: %(default)ipx)",
                         type=int,
