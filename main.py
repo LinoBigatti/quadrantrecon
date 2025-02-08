@@ -40,10 +40,12 @@ if __name__ == "__main__":
     parser.add_argument("--width",
                         help="width of the cropped area, in pixels (default: %(default)ipx)",
                         type=int,
+                        dest="cropped_width",
                         default=qr.cropped_width)
     parser.add_argument("--height",
                         help="height of the cropped area, in pixels (default: %(default)ipx)",
                         type=int,
+                        dest="cropped_height",
                         default=qr.cropped_height)
     parser.add_argument("--image-width",
                         help="width of the input images, in pixels (default: %(default)ipx)",
@@ -61,6 +63,26 @@ if __name__ == "__main__":
                         help="height of the padding between the cropped area and the quadrant's top left corner, in pixels (default: %(default)ipx)",
                         type=int,
                         default=qr.padding_height)
+    parser.add_argument("--precrop-top",
+                        help="area to crop from the top before bulk processing images, in pixels (default: %(default)ipx)",
+                        type=int,
+                        dest="vertical_crop_top",
+                        default=qr.vertical_crop_top)
+    parser.add_argument("--precrop-bottom",
+                        help="area to crop from the bottom before bulk processing images, in pixels (default: %(default)ipx)",
+                        type=int,
+                        dest="vertical_crop_bottom",
+                        default=qr.vertical_crop_bottom)
+    parser.add_argument("--precrop-left",
+                        help="area to crop from the left before bulk processing images, in pixels (default: %(default)ipx)",
+                        type=int,
+                        dest="horizontal_crop_left",
+                        default=qr.horizontal_crop_left)
+    parser.add_argument("--precrop-right",
+                        help="area to crop from the right before bulk processing images, in pixels (default: %(default)ipx)",
+                        type=int,
+                        dest="horizontal_crop_right",
+                        default=qr.horizontal_crop_right)
 
     parser.parse_args(namespace=qr)
 

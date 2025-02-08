@@ -46,6 +46,10 @@ class QuadrantRecon:
         self.cropped_height = 1700
         self.padding_width = 45
         self.padding_height = 45
+        self.horizontal_crop_left = 700
+        self.horizontal_crop_right = 700
+        self.vertical_crop_top = 500
+        self.vertical_crop_bottom = 0
         self.log_file = open("log.txt", "w")
 
     def __del__(self):
@@ -457,8 +461,18 @@ class QuadrantRecon:
 
         # Clear the sides of the image, leaving only the center
         for y in range(self.image_height):
-            image_yellow[y][0:700] = [0]
-            image_yellow[y][-700:-1] = [0]
+            # Crop rows
+            if y < self.vertical_crop_top or y > (self.image_height - self.vertical_crop_bottom):
+                image_yellow[y] = [0] * self.image_width
+
+                continue
+
+            # Crop columns
+            if self.horizontal_crop_left > 0:
+                image_yellow[y][0:self.horizontal_crop_left] = [0]
+
+            if self.horizontal_crop_right > 0:
+                image_yellow[y][-self.horizontal_crop_right:-1] = [0]
 
         # Opening (erotion followed by dilation) to get rid of small noise
         image_yellow = cv2.morphologyEx(image_yellow, cv2.MORPH_OPEN, kernel)
