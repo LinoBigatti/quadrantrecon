@@ -40,11 +40,19 @@ if __name__ == "__main__":
     parser.add_argument("--width",
                         help="width of the cropped area, in pixels (default: %(default)ipx)",
                         type=int,
-                        default=qr.width)
+                        default=qr.cropped_width)
     parser.add_argument("--height",
                         help="height of the cropped area, in pixels (default: %(default)ipx)",
                         type=int,
-                        default=qr.height)
+                        default=qr.cropped_height)
+    parser.add_argument("--image-width",
+                        help="width of the input images, in pixels (default: %(default)ipx)",
+                        type=int,
+                        default=qr.image_width)
+    parser.add_argument("--image-height",
+                        help="height of the input images, in pixels (default: %(default)ipx)",
+                        type=int,
+                        default=qr.image_height)
     parser.add_argument("--padding-width",
                         help="width of the padding between the cropped area and the quadrant's top left corner, in pixels (default: %(default)ipx)",
                         type=int,

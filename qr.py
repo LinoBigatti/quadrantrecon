@@ -40,8 +40,10 @@ class QuadrantRecon:
         self.device = "cuda"
         self.model_path = "sam_vit_h.pth"
         self.model_type = "vit_h"
-        self.width = 1700
-        self.height = 1700
+        self.image_width = 4000
+        self.image_height = 3000
+        self.cropped_width = 1700
+        self.cropped_height = 1700
         self.padding_width = 45
         self.padding_height = 45
         self.log_file = open("log.txt", "w")
@@ -65,8 +67,6 @@ class QuadrantRecon:
 
         # Correct image orientation before opening.
         orientation = metadata["0th"][piexif.ImageIFD.Orientation]
-        print(orientation)
-
         
         if orientation == 2:
             img = cv2.flip(img, 1)
@@ -138,8 +138,8 @@ class QuadrantRecon:
         for point in cnt:
             point = point[0]
         
-            # Note: Lower corners are not the image corners, but some points 500px inwards. This is because the quadrants have some handles on the sides
-            for i, (x, y) in enumerate([[0, 0], [3500, 3000], [4000, 0], [500, 3000]]):
+            # Note: Lower corners are not the points closest to the image corners, but the points closest to the image corners, 500px inwards. This is because the quadrants have some handles on the sides
+            for i, (x, y) in enumerate([[0, 0], [self.image_width - 500, self.image_height], [self.image_with, 0], [500, self.image_height]]):
                 # Euclidean distance
                 dist = sqrt((x - point[0]) ** 2 + (y - point[1]) ** 2)
                 
@@ -160,8 +160,8 @@ class QuadrantRecon:
         num = np.dot(dap, dp)
         center = np.ndarray.astype((num / denom) * db + corners[2], np.uint32)
 
-        x = int(center[0] - self.width / 2)
-        y = int(center[1] - self.height / 2)
+        x = int(center[0] - self.cropped_width / 2)
+        y = int(center[1] - self.cropped_height / 2)
 
         # Heuristic: Most images need to be cropped near a certain X region. Fails if its outside as a safeguard.
         MIN_X = 900
@@ -189,7 +189,7 @@ class QuadrantRecon:
         if not result.failed:
             result = result.Ok()
         
-        return [x, y, x + self.width, y + self.height], result
+        return [x, y, x + self.cropped_width, y + self.cropped_height], result
 
     def main(self):
         self.create_predictor()
@@ -235,8 +235,8 @@ class QuadrantRecon:
             width, height = get_image_size(file)
 
             # Prevent running quadrantrecon on unrecognized images
-            if width != 4000 or height != 3000:
-                self.log(f"Skipping {file}: This image has a resolution of {width}x{height} (Needed 4000x3000).")
+            if width != self.image_width or height != self.image_height:
+                self.log(f"Skipping {file}: This image has a resolution of {width}x{height} (Needed {self.image_width}x{self.image_height}).")
 
                 skip_file = True
             
@@ -290,7 +290,6 @@ class QuadrantRecon:
 
         # Process batch images
         for rel_folder in tqdm(files.keys()):
-            print(rel_folder)
             result = Result(file).Err("iteration", "before_processing", "result variable was not updated")
 
             original_images = {}
@@ -304,12 +303,11 @@ class QuadrantRecon:
                 img = self.imread(file)
                 original_images[file] = img
 
-                if img.shape[:2] != (3000, 4000):
+                if img.shape[:2] != (self.image_height, self.image_width):
                     continue
 
-                blended_image = blended_image + img * blending_fraction
-
-            blended_image = np.ndarray.astype(blended_image, np.uint8)
+                # Convert to uint8 after each blending pass, because if we use floats the range should be from 0.0 to 1.0
+                blended_image = np.ndarray.astype(blended_image + img * blending_fraction, np.uint8)
 
             self.log("Finished blending input images.")
                 
@@ -339,8 +337,8 @@ class QuadrantRecon:
                         
                         user_comment = piexif.helper.UserComment.dump("_quadrantrecon_marker/" + os.path.dirname(relative_path))
 
-                        metadata["0th"][piexif.ImageIFD.XResolution] = (self.width, 1)
-                        metadata["0th"][piexif.ImageIFD.YResolution] = (self.height, 1)
+                        metadata["0th"][piexif.ImageIFD.XResolution] = (self.cropped_width, 1)
+                        metadata["0th"][piexif.ImageIFD.YResolution] = (self.cropped_height, 1)
 
                         metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
 
@@ -403,8 +401,8 @@ class QuadrantRecon:
             relative_path = os.path.relpath(filename, top_folder)
             user_comment = piexif.helper.UserComment.dump("_quadrantrecon_marker/" + os.path.dirname(relative_path))
 
-            metadata["0th"][piexif.ImageIFD.XResolution] = (self.width, 1)
-            metadata["0th"][piexif.ImageIFD.YResolution] = (self.height, 1)
+            metadata["0th"][piexif.ImageIFD.XResolution] = (self.cropped_width, 1)
+            metadata["0th"][piexif.ImageIFD.YResolution] = (self.cropped_height, 1)
 
             metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
 
@@ -417,7 +415,7 @@ class QuadrantRecon:
         result = Result(filename)
         
         if not self.predictor:
-            print("ERROR: Must load a predictor using create_predictor() first.")
+            self.log("ERROR: Must load a predictor using create_predictor() first.")
 
             exit()
         
@@ -455,7 +453,7 @@ class QuadrantRecon:
             image_yellow = cv2.inRange(image_hsv, bajo_amarillo, alto_amarillo)
 
         # Clear the sides of the image, leaving only the center
-        for y in range(0, 3000):
+        for y in range(self.image_height):
             image_yellow[y][0:700] = [0]
             image_yellow[y][-700:-1] = [0]
 
@@ -559,7 +557,7 @@ class QuadrantRecon:
         cropped_width = np.shape(image_cropped)[0]
         cropped_height = np.shape(image_cropped)[1]
 
-        if cropped_width != self.width or cropped_height != self.height:
+        if cropped_width != self.cropped_width or cropped_height != self.cropped_height:
             return bb, result.Err("failsafe", "bounds_check", "Image discarded: Cropped width and height are different than expected")
 
         image_gray = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2GRAY)
@@ -568,7 +566,7 @@ class QuadrantRecon:
         kernel = np.ones((5, 5), np.uint8)
         image_gray = cv2.erode(image_gray, kernel, iterations=4)
         
-        bright_content = np.count_nonzero(image_gray) / (self.width * self.height)
+        bright_content = np.count_nonzero(image_gray) / (self.cropped_width * self.cropped_height)
 
         MAX_BRIGHTNESS = 0.06
         if bright_content >= MAX_BRIGHTNESS:
