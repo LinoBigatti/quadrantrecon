@@ -58,6 +58,16 @@ class QuadrantRecon:
 
         self.log_file.write(message + "\n")
 
+    def plot_image(self, image, message: str = ""):
+        if self.plot:
+            self.log(f"Plotting{' ' + message if message else ''}...")
+
+            plt.figure(figsize=(10,10))
+            plt.imshow(image)
+
+            plt.axis('on')
+            plt.show()
+
     def imread(self, path):
         img = cv2.imread(path)
         metadata = piexif.load(path)
@@ -139,7 +149,7 @@ class QuadrantRecon:
             point = point[0]
         
             # Note: Lower corners are not the points closest to the image corners, but the points closest to the image corners, 500px inwards. This is because the quadrants have some handles on the sides
-            for i, (x, y) in enumerate([[0, 0], [self.image_width - 500, self.image_height], [self.image_with, 0], [500, self.image_height]]):
+            for i, (x, y) in enumerate([[0, 0], [self.image_width - 500, self.image_height], [self.image_width, 0], [500, self.image_height]]):
                 # Euclidean distance
                 dist = sqrt((x - point[0]) ** 2 + (y - point[1]) ** 2)
                 
@@ -426,14 +436,7 @@ class QuadrantRecon:
         
         metadata = piexif.load(filename)
 
-        if self.plot and self.verbose:
-            self.log("Plotting loaded image...")
-
-            plt.figure(figsize=(10,10))
-            plt.imshow(image_rgb)
-
-            plt.axis('on')
-            plt.show()
+        self.plot_image(image_rgb, "loaded image")
 
         kernel = np.ones((25, 25), np.uint8)
 
@@ -463,14 +466,7 @@ class QuadrantRecon:
         # Closing( dilation followed by erotion) to close up holes in bigger objects
         image_yellow = cv2.morphologyEx(image_yellow, cv2.MORPH_CLOSE, kernel)
 
-        if self.plot and self.verbose:
-            self.log("Plotting yellow image...")
-
-            plt.figure(figsize=(10,10))
-            plt.imshow(image_yellow)
-
-            plt.axis('on')
-            plt.show()
+        self.plot_image(image_yellow, "yellow image")
 
         yellow_coords = np.column_stack(np.where(image_yellow > 0))
 
@@ -543,12 +539,7 @@ class QuadrantRecon:
         # Crop image
         image_cropped = image_rgb[bb[1]:bb[3], bb[0]:bb[2]]
 
-        if self.plot and self.verbose:
-            plt.figure(figsize=(10, 10))
-            plt.imshow(image_cropped)
-            plt.title(f"Cropped Image", fontsize=18)
-            plt.axis("off")
-            plt.show()  
+        self.plot_image(image_cropped, "cropped image")
 
         if bb_result.failed:
             return bb, result.copy_from(bb_result)
