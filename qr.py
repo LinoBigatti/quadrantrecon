@@ -3,7 +3,7 @@ import sys
 import csv
 import multiprocessing
 
-from itertools import islice, chain
+from itertools import islice, chain, batched
 from typing import List
 from math import sqrt
 
@@ -277,80 +277,88 @@ class QuadrantRecon:
             return results
 
         # Process batch images
+        iteration_c = 1
         for rel_folder in tqdm(files.keys()):
-            result = Result(file).Err("iteration", "before_processing", "result variable was not updated")
+            for batched_files in batched(files[rel_folder], 200):
+                result = Result(file).Err("iteration", "before_processing", "result variable was not updated")
 
-            # Blend images
-            blending_fraction = 1.0 / len(files[rel_folder])
-            blended_image = np.zeros_like(self.imread(files[rel_folder][0][0]))
-            
-            original_images = {}
-
-            self.log("Starting blending input images.")
-            with multiprocessing.Manager() as manager:
-                _original_images = manager.dict()
-
-                args = [(file, _original_images, blending_fraction, self.image_width, self.image_height) for file, _ in files[rel_folder]]
+                # Blend images
+                blending_fraction = 1.0 / len(batched_files)
+                blended_image = np.zeros((self.image_height, self.image_width, 3), np.uint8) 
                 
-                with multiprocessing.Pool(self.threads) as pool:
-                    results = pool.starmap(_load_image_for_blending, args)
+                self.log(f"Loading images from path {rel_folder}... (Iteration {iteration_c})")
+                iteration_c += 1
+
+                original_images = {}
+
+                self.log("Starting blending input images.")
+                with multiprocessing.Manager() as manager:
+                    # Create a tuple of arguments for each function call
+                    args = [(file, blending_fraction, self.image_width, self.image_height) for file, _ in batched_files]
                     
-                    blended_image = sum(results)
+                    with multiprocessing.Pool(self.threads) as pool:
+                        # Starmap calls the function while unpacking the arguments tuple into function arguments
+                        results = pool.starmap(_load_image_for_blending, args)
+                       
+                        pool.close()
+                        pool.join()
 
-                original_images = {key: _original_images[key] for key in _original_images.keys()}
-        
-            self.log("Finished blending input images.")
-                
-            try:
-                self.log(f"Loading image from path {filename}...")
+                        # Add files together and store in cache
+                        for file, img, img_blending in results:
+                            np.add(blended_image, img_blending, out=blended_image)
+
+                            original_images[file] = img
+
                 image = cv2.cvtColor(blended_image, cv2.COLOR_BGR2RGB)
-        
-                self.log("Image loaded.")
 
-                bb, result = self.process_image_no_load(image, files[rel_folder][0][0], files[rel_folder][0][1], True)
-                
-                print(result)
-                for file, top_folder in files[rel_folder]:
-                    original_image = original_images[file]
+                self.log("Finished blending input images.")
+                    
+                try:
+                    self.log("Images loaded.")
 
-                    # Crop image
-                    image_cropped = original_image[bb[1]:bb[3], bb[0]:bb[2]]
+                    bb, result = self.process_image_no_load(image, batched_files[0][0], batched_files[0][1], True)
+                    
+                    for file, top_folder in batched_files:
+                        original_image = original_images[file]
 
-                    # Save image
-                    if not self.dry_run and not result.failed:
-                        if image_cropped.size == 0:
-                            self.log(f"WARNING: Tried to write an empty image for file {file}")
+                        # Crop image
+                        image_cropped = original_image[bb[1]:bb[3], bb[0]:bb[2]]
 
-                            continue
+                        # Save image
+                        if not self.dry_run and not result.failed:
+                            if image_cropped.size == 0:
+                                self.log(f"WARNING: Tried to write an empty image for file {file}")
 
-                        new_filename = self.get_new_filename(file, top_folder)
+                                continue
 
-                        self.log("Saving modified image...");
+                            new_filename = self.get_new_filename(file, top_folder)
 
-                        cv2.imwrite(new_filename, image_cropped);
+                            self.log("Saving modified image...");
 
-                        self.log("Writing metadata...")
-                        
-                        user_comment = piexif.helper.UserComment.dump("_quadrantrecon_marker/" + os.path.dirname(relative_path))
+                            cv2.imwrite(new_filename, image_cropped);
 
-                        metadata["0th"][piexif.ImageIFD.XResolution] = (self.cropped_width, 1)
-                        metadata["0th"][piexif.ImageIFD.YResolution] = (self.cropped_height, 1)
+                            self.log("Writing metadata...")
+                            
+                            user_comment = piexif.helper.UserComment.dump("_quadrantrecon_marker/" + os.path.dirname(relative_path))
 
-                        metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
+                            metadata["0th"][piexif.ImageIFD.XResolution] = (self.cropped_width, 1)
+                            metadata["0th"][piexif.ImageIFD.YResolution] = (self.cropped_height, 1)
 
-                        exif_bytes = piexif.dump(metadata)
-                        piexif.insert(exif_bytes, new_filename)
-            except Exception as e:
-                result = Result(file).Err("iteration", "after_processing", f"Exception raised: {e}")
-                
-                self.log(f"Encountered an error while processing file {file}: {e}")
-            finally:
-                results.append(result)
+                            metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
 
-                with open(os.path.join(self.output_path, "log.csv"), "a", newline="") as f:
-                    writer = csv.writer(f, delimiter = ";")
+                            exif_bytes = piexif.dump(metadata)
+                            piexif.insert(exif_bytes, new_filename)
+                except Exception as e:
+                    result = Result(file).Err("iteration", "after_processing", f"Exception raised: {e}")
+                    
+                    self.log(f"Encountered an error while processing file {file}: {e}")
+                finally:
+                    results.append(result)
 
-                    writer.writerow(result.get_as_row())
+                    with open(os.path.join(self.output_path, "log.csv"), "a", newline="") as f:
+                        writer = csv.writer(f, delimiter = ";")
+
+                        writer.writerow(result.get_as_row())
 
 
         return results
@@ -592,9 +600,8 @@ def imread_correcting_rotation(path):
     return img
 
 # Loads an image and multiplies it by its blending factor.
-def _load_image_for_blending(file, original_images, blending_fraction, image_width, image_height):
+def _load_image_for_blending(file, blending_fraction, image_width, image_height):
     img = imread_correcting_rotation(file)
-    original_images[file] = img
 
     # Extra failsafe for rotated/weird images
     height, width = img.shape[:2]
@@ -604,4 +611,4 @@ def _load_image_for_blending(file, original_images, blending_fraction, image_wid
         return
 
     # Convert to uint8 after each blending pass, because if we use floats the range should be from 0.0 to 1.0
-    return np.ndarray.astype(img * blending_fraction, np.uint8)
+    return (file, img, np.ndarray.astype(img * blending_fraction, np.uint8))
