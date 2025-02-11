@@ -7,8 +7,6 @@ from itertools import islice, chain, batched
 from typing import List
 from math import sqrt
 
-sys.path.append("sam/")
-
 import torch
 from segment_anything import SamPredictor, sam_model_registry
 
@@ -21,11 +19,11 @@ import matplotlib.pyplot as plt
 import piexif 
 import piexif.helper
 
-from get_image_size import get_image_size
-
 from tqdm import tqdm
 
-from utils import Result, PlotUtils
+from .get_image_size import get_image_size
+
+from .utils import Result, PlotUtils
 
 BoundingBox = List[int]
 

@@ -1,8 +1,8 @@
 import argparse
 
-from qr import QuadrantRecon
+from .qr import QuadrantRecon
 
-if __name__ == "__main__":
+def main():
     qr = QuadrantRecon()
 
     parser = argparse.ArgumentParser(
@@ -92,3 +92,7 @@ if __name__ == "__main__":
 
     qr.main()
 
+
+# The usual if __name__ == "__main__" block is omitted for __main__.py files.
+# See also: https://docs.python.org/3/library/__main__.html
+main()

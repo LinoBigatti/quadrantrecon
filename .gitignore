@@ -1,6 +1,6 @@
 *.swp
 
-venv/
+venv*/
 build/
 dist/
 __pycache__/
@@ -16,3 +16,6 @@ cropped_images/
 
 log.csv
 log.txt
+
+pdm.lock
+.pdm-python
