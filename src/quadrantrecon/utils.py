@@ -1,3 +1,6 @@
+import argparse
+
+import cv2
 import numpy as np
 
 import matplotlib
@@ -63,3 +66,85 @@ class PlotUtils:
         x0, y0 = box[0], box[1]
         w, h = box[2] - box[0], box[3] - box[1]
         ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2))
+
+class StoreMultiConstAction(argparse.Action):
+    def __init__(self,
+                 option_strings,
+                 dest,
+                 const=None,
+                 default=None,
+                 required=False,
+                 help=None,
+                 metavar=None,
+                 deprecated=False):
+        super(StoreMultiConstAction, self).__init__(
+            option_strings=option_strings,
+            dest=dest,
+            nargs=0,
+            const=const,
+            default=default,
+            required=required,
+            help=help,
+            deprecated=deprecated)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        for dst, const in self.const.items():
+            setattr(namespace, dst, const)
+
+    def format_usage(self):
+        return ' | '.join(self.option_strings)
+
+class DictAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, self.choices.get(values, self.default))
+
+class ArrayAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        _values = np.array(values, dtype=np.uint8)
+
+        setattr(namespace, self.dest, _values)
+
+def get_opencv_colorspaces():
+    return {
+        "bgr": cv2.COLOR_RGB2BGR,
+        "ycc": cv2.COLOR_RGB2YCrCb,
+        "yuv": cv2.COLOR_RGB2YUV,
+        "hsv": cv2.COLOR_RGB2HSV,
+        "hsv_full": cv2.COLOR_RGB2HSV_FULL,
+        "hls": cv2.COLOR_RGB2HLS,
+        "hls_full": cv2.COLOR_RGB2HLS_FULL,
+        "ciexyz": cv2.COLOR_RGB2XYZ,
+        "cielab": cv2.COLOR_RGB2Lab,
+        "cieluv": cv2.COLOR_RGB2Luv,
+    }
+
+def imread_correcting_rotation(path):
+    img = cv2.imread(path)
+    metadata = piexif.load(path)
+
+    if not piexif.ImageIFD.Orientation in metadata["0th"]:
+        return img
+
+    # Correct image orientation before opening.
+    orientation = metadata["0th"][piexif.ImageIFD.Orientation]
+    
+    if orientation == 2:
+        img = cv2.flip(img, 1)
+    elif orientation == 3:
+        img = cv2.rotate(img, cv2.ROTATE_180)
+    elif orientation == 4:
+        img = cv2.rotate(img, cv2.ROTATE_180)
+        img = cv2.flip(img, 1)
+    elif orientation == 5:
+        img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        img = cv2.flip(img, 1)
+    elif orientation == 6:
+        img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    elif orientation == 7:
+        img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+        img = cv2.flip(img, 1)
+    elif orientation == 8:
+        img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+
+    return img
+

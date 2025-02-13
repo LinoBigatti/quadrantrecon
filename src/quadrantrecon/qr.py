@@ -2,6 +2,7 @@ import os
 import sys
 import csv
 import multiprocessing
+import collections.abc
 
 from itertools import islice, chain, batched
 from typing import List
@@ -23,7 +24,7 @@ from tqdm import tqdm
 
 from .get_image_size import get_image_size
 
-from .utils import Result, PlotUtils
+from .utils import Result, PlotUtils, imread_correcting_rotation
 
 BoundingBox = List[int]
 
@@ -38,7 +39,7 @@ class QuadrantRecon:
         self.device = "cuda"
         self.model_path = "sam_vit_h.pth"
         self.model_type = "vit_h"
-        self.threads = 16
+        self.threads = os.process_cpu_count()
         self.image_width = 4000
         self.image_height = 3000
         self.cropped_width = 1700
@@ -49,6 +50,13 @@ class QuadrantRecon:
         self.horizontal_crop_right = 700
         self.vertical_crop_top = 500
         self.vertical_crop_bottom = 0
+        self.colorspace = cv2.COLOR_RGB2GRAY
+        self.predetection_min_color = 150
+        self.predetection_max_color = 255
+        self.safeguard_colorspace = cv2.COLOR_RGB2GRAY
+        self.safeguard_min_color = 200
+        self.safeguard_max_color = 255
+        self.safeguard_max_content = 0.06
         self.log_file = open("log.txt", "w")
 
     def __del__(self):
@@ -366,6 +374,11 @@ class QuadrantRecon:
             matplotlib.use('TKagg')
 
         self.log("Loading model...")
+
+        if not os.path.isfile(self.model_path):
+            print(f"Segment anything model could not be found at {self.model_path}. You can download the default one from https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth, naming it sam_vit_h.pth or providing a path with --model-path.")
+
+            exit()
         
         sam = sam_model_registry[self.model_type](checkpoint=self.model_path)
         sam.to(device = self.device)
@@ -432,48 +445,44 @@ class QuadrantRecon:
 
         kernel = np.ones((25, 25), np.uint8)
 
-        image_yellow = None
+        # Create a mask to get certain pixels. Default converts to grayscale (Backgrounds in blended pictures are mostly dark grey)
+        image_predetection = cv2.cvtColor(image_rgb, self.colorspace)
 
-        if batch:
-            # Create a mask to get bright pixels (Backgrounds in blended pictures are mostly dark grey)
-            image_gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+        if isinstance(self.predetection_min_color, collections.abc.Sequence):
+            self.predetection_min_color = np.array(self.predetection_min_color, dtype=np.uint8)
+        if isinstance(self.predetection_max_color, collections.abc.Sequence):
+            self.predetection_max_color = np.array(self.predetection_max_color, dtype=np.uint8)
 
-            image_yellow = cv2.inRange(image_gray, 150, 255)
-        else:
-            bajo_amarillo = np.array([20, 50, 50], dtype=np.uint8)  # Hue 20° - High saturation and value
-            alto_amarillo = np.array([60, 255, 255], dtype=np.uint8)  # Hue 60° - Max saturation and value
-
-            # Create a mask to get yellow pixels
-            image_hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
-            image_yellow = cv2.inRange(image_hsv, bajo_amarillo, alto_amarillo)
+        image_predetection = cv2.inRange(image_predetection, self.predetection_min_color, self.predetection_max_color)
 
         # Clear the sides of the image, leaving only the center
         for y in range(self.image_height):
             # Crop rows
             if y < self.vertical_crop_top or y > (self.image_height - self.vertical_crop_bottom):
-                image_yellow[y] = [0] * self.image_width
+                image_predetection[y] = [0] * self.image_width
 
                 continue
 
             # Crop columns
             if self.horizontal_crop_left > 0:
-                image_yellow[y][0:self.horizontal_crop_left] = [0]
+                image_predetection[y][0:self.horizontal_crop_left] = [0]
 
             if self.horizontal_crop_right > 0:
-                image_yellow[y][-self.horizontal_crop_right:-1] = [0]
+                image_predetection[y][-self.horizontal_crop_right:-1] = [0]
 
         # Opening (erotion followed by dilation) to get rid of small noise
-        image_yellow = cv2.morphologyEx(image_yellow, cv2.MORPH_OPEN, kernel)
+        image_predetection = cv2.morphologyEx(image_predetection, cv2.MORPH_OPEN, kernel)
 
-        # Closing( dilation followed by erotion) to close up holes in bigger objects
-        image_yellow = cv2.morphologyEx(image_yellow, cv2.MORPH_CLOSE, kernel)
+        # Closing (dilation followed by erotion) to close up holes in bigger objects
+        image_predetection = cv2.morphologyEx(image_predetection, cv2.MORPH_CLOSE, kernel)
 
-        self.plot_image(image_yellow, "yellow image")
+        self.plot_image(image_predetection, "predetected image (by color)")
 
-        yellow_coords = np.column_stack(np.where(image_yellow > 0))
+        # Collect valid points and select a random sample from them for the final detection
+        predetected_coords = np.column_stack(np.where(image_predetection > 0))
 
-        random_indexes = np.random.choice(len(yellow_coords), 10, replace=False)
-        random_coords = yellow_coords[random_indexes]
+        random_indexes = np.random.choice(len(predetected_coords), 10, replace=False)
+        random_coords = predetected_coords[random_indexes]
 
         self.log("Setting predictor image...")
         self.predictor.set_image(image_rgb)
@@ -553,49 +562,18 @@ class QuadrantRecon:
         if cropped_width != self.cropped_width or cropped_height != self.cropped_height:
             return bb, result.Err("failsafe", "bounds_check", "Image discarded: Cropped width and height are different than expected")
 
-        image_gray = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2GRAY)
-        image_gray = cv2.threshold(image_gray, 200, 255, cv2.THRESH_BINARY)[1]
+        image_postdetection = cv2.cvtColor(image_cropped, self.safeguard_colorspace)
+        image_postdetection = cv2.threshold(image_postdetection, self.safeguard_min_color, self.safeguard_max_color, cv2.THRESH_BINARY)[1]
 
         kernel = np.ones((5, 5), np.uint8)
-        image_gray = cv2.erode(image_gray, kernel, iterations=4)
+        image_gray = cv2.erode(image_postdetection, kernel, iterations=4)
         
-        bright_content = np.count_nonzero(image_gray) / (self.cropped_width * self.cropped_height)
+        content = np.count_nonzero(image_postdetection) / (self.cropped_width * self.cropped_height)
 
-        MAX_BRIGHTNESS = 0.06
-        if bright_content >= MAX_BRIGHTNESS:
-            return bb, result.Err("failsafe", "yellow_check", f"Image discarded: Brightness/Yellow content is above {MAX_BRIGHTNESS} (Current: {bright_content})")
+        if content >= self.safeguard_max_content:
+            return bb, result.Err("failsafe", "color_check", f"Image discarded: Safeguard color content is above {self.safeguard_max_content} (Current: {content})")
 
         return bb, result.Ok()
-
-def imread_correcting_rotation(path):
-    img = cv2.imread(path)
-    metadata = piexif.load(path)
-
-    if not piexif.ImageIFD.Orientation in metadata["0th"]:
-        return img
-
-    # Correct image orientation before opening.
-    orientation = metadata["0th"][piexif.ImageIFD.Orientation]
-    
-    if orientation == 2:
-        img = cv2.flip(img, 1)
-    elif orientation == 3:
-        img = cv2.rotate(img, cv2.ROTATE_180)
-    elif orientation == 4:
-        img = cv2.rotate(img, cv2.ROTATE_180)
-        img = cv2.flip(img, 1)
-    elif orientation == 5:
-        img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
-        img = cv2.flip(img, 1)
-    elif orientation == 6:
-        img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
-    elif orientation == 7:
-        img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-        img = cv2.flip(img, 1)
-    elif orientation == 8:
-        img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-
-    return img
 
 # Loads an image and multiplies it by its blending factor.
 def _load_image_for_blending(file, blending_fraction, image_width, image_height):
