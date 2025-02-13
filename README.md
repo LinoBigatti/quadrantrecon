@@ -5,6 +5,16 @@ The detection parameters can be configured to detect other colors, crop differen
 
 ## Installation
 
+You can install QuadrantRecon via pip:
+
+```bash
+# Linux
+pip install quadrantrecon
+
+# Windows
+py -m pip install quadrantrecon
+```
+
 Afterwards, we need to download the model weights. You can find the default one [here](https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth).
 You can change the file name to `sam_vit_h.pth` and place it in the folder where the program is executed to load it automatically, or you can provide your own file with the `--model-path` and `--model-type` flags:
 
@@ -71,16 +81,4 @@ py -m pip install .
 
 # Windows (with CUDA support)
 py -m pip install . --index-url https://download.pytorch.org/whl/cu121
-```
-
-## Building static binaries
-
-You can build the release binaries by invoking pyinstaller:
-
-```bash
-# Linux
-python -m pyinstaller main.spec
-
-# Windows
-py -m pyinstaller main.spec
 ```
