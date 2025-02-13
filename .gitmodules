@@ -1,3 +1,0 @@
-[submodule "sam"]
-	path = src/sam
-	url = https://github.com/facebookresearch/segment-anything

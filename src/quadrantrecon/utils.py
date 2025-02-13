@@ -3,6 +3,9 @@ import argparse
 import cv2
 import numpy as np
 
+import piexif 
+import piexif.helper
+
 import matplotlib
 import matplotlib.pyplot as plt
 

@@ -69,7 +69,8 @@ dependencies = [
     "tk>=0.1.0",
     "piexif>=1.1.2",
     "tqdm>=4.67.1",
-    "segment_anything @ file:///${PROJECT_ROOT}/src/sam/dist/segment_anything-1.0-py3-none-any.whl",
+    "segment-anything-py>=1.0.1",
+    #"segment_anything @ file:///${PROJECT_ROOT}/src/sam/dist/segment_anything-1.0-py3-none-any.whl",
 ]
 requires-python = ">=3.12"
 readme = "README.md"
