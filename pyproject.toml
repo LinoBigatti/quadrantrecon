@@ -5,7 +5,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "quadrantrecon"
-version = "1.0.0"
+version = "1.0.1"
 description = "Image recognition software to crop photos of marine ecosystems. Made for the MBOM Pole to Pole project."
 authors = [
     {name = "Lino Bigatti", email = "linobigatti@protonmail.com"},
