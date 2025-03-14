@@ -11,7 +11,7 @@ def main():
     parser = argparse.ArgumentParser(
         prog="QuadrantRecon",
         description="Finds and crops out quadrants in images",
-        epilog="IMPORTANT: This program requires a segment anything model to be used. You can download the default one from https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth, naming it sam_vit_h.pth or providing a path with --model-path."
+        epilog="IMPORTANT: This program requires a segment anything model to be used. You can download the default one from https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth and rename it to sam_vit_h.pth, or you can provide a path to a custom model with --model-path."
     )
 
     options_group = parser.add_argument_group("Program options")
@@ -27,6 +27,10 @@ def main():
     options_group.add_argument("--dry-run",
                         help="dont save images after cropping",
                         action="store_true")
+    options_group.add_argument("--extra-metadata",
+                        help="retrieve and store optional metadata from the file paths (metadata retrieved, in order: climate/date/location/site/intertidal) (default: %(default)s)",
+                        action=argparse.BooleanOptionalAction,
+                        default=qr.extra_metadata)
     options_group.add_argument("-j", "--threads",
                         help="number of threads to use for loading files (default: %(default)s)",
                         type=int,

@@ -71,6 +71,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "segment-anything-py>=1.0.1",
     #"segment_anything @ file:///${PROJECT_ROOT}/src/sam/dist/segment_anything-1.0-py3-none-any.whl",
+    "iptcinfo3>=2.1.4"
 ]
 requires-python = ">=3.12"
 readme = "README.md"

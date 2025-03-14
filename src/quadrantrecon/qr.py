@@ -19,10 +19,13 @@ import matplotlib.pyplot as plt
 
 import piexif 
 import piexif.helper
+import iptcinfo3
 
 from tqdm import tqdm
 
 from .get_image_size import get_image_size
+
+from .metadata import get_metadata_from_path
 
 from .utils import Result, PlotUtils, imread_correcting_rotation
 
@@ -36,6 +39,7 @@ class QuadrantRecon:
         self.plot = False
         self.force = False
         self.dry_run = False
+        self.extra_metadata = True
         self.device = "cuda"
         self.model_path = "sam_vit_h.pth"
         self.model_type = "vit_h"
@@ -211,7 +215,9 @@ class QuadrantRecon:
             if os.path.isdir(filename):
                 for root, folders, inner_files in os.walk(filename):
                     for file in inner_files:
-                        if ".JPG" in file.upper() or ".JPEG" in file.upper() or ".PNG" in file.upper():
+                        basename = os.path.basename(file).upper()
+
+                        if (".JPG" in basename or ".JPEG" in basename) and not basename.startswith("."):
                             _files.append((os.path.join(root, file), filename))
 
         # Filter input files
@@ -344,16 +350,8 @@ class QuadrantRecon:
                             cv2.imwrite(new_filename, image_cropped);
 
                             self.log("Writing metadata...")
-                            
-                            user_comment = piexif.helper.UserComment.dump("_quadrantrecon_marker/" + os.path.dirname(relative_path))
 
-                            metadata["0th"][piexif.ImageIFD.XResolution] = (self.cropped_width, 1)
-                            metadata["0th"][piexif.ImageIFD.YResolution] = (self.cropped_height, 1)
-
-                            metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
-
-                            exif_bytes = piexif.dump(metadata)
-                            piexif.insert(exif_bytes, new_filename)
+                            self.write_metadata(new_filename, rel_folder, top_folder)
                 except Exception as e:
                     result = Result(file).Err("iteration", "after_processing", f"Exception raised: {e}")
                     
@@ -413,16 +411,7 @@ class QuadrantRecon:
 
             self.log("Writing metadata...")
             
-            relative_path = os.path.relpath(filename, top_folder)
-            user_comment = piexif.helper.UserComment.dump("_quadrantrecon_marker/" + os.path.dirname(relative_path))
-
-            metadata["0th"][piexif.ImageIFD.XResolution] = (self.cropped_width, 1)
-            metadata["0th"][piexif.ImageIFD.YResolution] = (self.cropped_height, 1)
-
-            metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
-
-            exif_bytes = piexif.dump(metadata)
-            piexif.insert(exif_bytes, new_filename)
+            self.write_metadata(new_filename, top_folder, "")
 
         return result
 
@@ -574,6 +563,45 @@ class QuadrantRecon:
             return bb, result.Err("failsafe", "color_check", f"Image discarded: Safeguard color content is above {self.safeguard_max_content} (Current: {content})")
 
         return bb, result.Ok()
+
+    def write_metadata(self, new_filename: str, rel_folder: str, top_folder: str):
+        metadata = piexif.load(new_filename)
+        iptc_metadata = iptcinfo3.IPTCInfo(new_filename, force=True)
+
+        new_metadata = get_metadata_from_path(rel_folder, top_folder)
+
+        metadata["0th"][piexif.ImageIFD.ImageWidth] = (self.cropped_width, 1)
+        metadata["0th"][piexif.ImageIFD.ImageLength] = (self.cropped_height, 1)
+
+        user_comment = piexif.helper.UserComment.dump("_quadrantrecon_marker")
+        metadata["Exif"][piexif.ExifIFD.UserComment] = user_comment
+
+        if self.extra_metadata:
+            if new_metadata["date"]:
+                iptc_metadata["reference date"] = str(new_metadata["date"])
+            if new_metadata["site"]:
+                iptc_metadata["sub-location"] = new_metadata["site"]
+            if new_metadata["location"]:
+                iptc_metadata["city"] = new_metadata["location"]
+            if new_metadata["intertidal"]:
+                iptc_metadata["category"] = new_metadata["intertidal"]
+            if new_metadata["climate"]:
+                iptc_metadata["supplemental category"] = [new_metadata["climate"]]
+
+            keywords = []
+            for key, value in new_metadata.items():
+                if key in ["path", "date", "site", "location"] or value == "":
+                    continue
+                
+                keywords.append(str(value).upper())
+
+            if keywords:
+                iptc_metadata["keywords"] = keywords
+
+        exif_bytes = piexif.dump(metadata)
+        piexif.insert(exif_bytes, new_filename)
+
+        iptc_metadata.save()
 
 # Loads an image and multiplies it by its blending factor.
 def _load_image_for_blending(file, blending_fraction, image_width, image_height):
