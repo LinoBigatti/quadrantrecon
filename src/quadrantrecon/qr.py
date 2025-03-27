@@ -43,7 +43,7 @@ class QuadrantRecon:
         self.device = "cuda"
         self.model_path = "sam_vit_h.pth"
         self.model_type = "vit_h"
-        self.threads = os.process_cpu_count()
+        self.threads = os.cpu_count()
         self.image_width = 4000
         self.image_height = 3000
         self.cropped_width = 1700

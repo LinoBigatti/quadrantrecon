@@ -5,7 +5,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "quadrantrecon"
-version = "1.0.2"
+version = "1.0.4"
 description = "Image recognition software to crop photos of marine ecosystems. Made for the MBOM Pole to Pole project."
 authors = [
     {name = "Lino Bigatti", email = "linobigatti@protonmail.com"},
@@ -56,7 +56,6 @@ dependencies = [
     "scipy>=1.13.0",
     "setuptools>=69.0.3",
     "six>=1.16.0",
-    "smbus>=1.1",
     "sympy>=1.12",
     "TBB>=0.2",
     "tomli>=2.0.1",
@@ -71,7 +70,8 @@ dependencies = [
     "tqdm>=4.67.1",
     "segment-anything-py>=1.0.1",
     #"segment_anything @ file:///${PROJECT_ROOT}/src/sam/dist/segment_anything-1.0-py3-none-any.whl",
-    "iptcinfo3>=2.1.4"
+    "iptcinfo3>=2.1.4",
+    "smbus2>=0.5.0"
 ]
 requires-python = ">=3.12"
 readme = "README.md"
