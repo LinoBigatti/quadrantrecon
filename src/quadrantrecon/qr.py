@@ -5,6 +5,7 @@ import multiprocessing
 import collections.abc
 
 from itertools import islice, chain, batched
+from pathlib import Path
 from typing import List
 from math import sqrt
 
@@ -27,7 +28,7 @@ from .get_image_size import get_image_size
 
 from .metadata import get_metadata_from_path
 
-from .utils import Result, PlotUtils, imread_correcting_rotation
+from .utils import Result, PlotUtils, imread_correcting_rotation, imwrite
 
 BoundingBox = List[int]
 
@@ -61,7 +62,7 @@ class QuadrantRecon:
         self.safeguard_min_color = 200
         self.safeguard_max_color = 255
         self.safeguard_max_content = 0.06
-        self.log_file = open("log.txt", "w")
+        self.log_file = open("log.txt", "wb")
 
     def __del__(self):
         # We need to close the file handle
@@ -71,7 +72,8 @@ class QuadrantRecon:
         if self.verbose:
             print(message)
 
-        self.log_file.write(message + "\n")
+        encoded_message = (message + "\n").encode("ascii", errors="ignore")
+        self.log_file.write(encoded_message)
 
     def imread(self, path):
         return imread_correcting_rotation(path)
@@ -210,7 +212,7 @@ class QuadrantRecon:
         # Collect filenames from all folders and subfolders listed in the arguments
         for filename in self.filename:
             if os.path.isfile(filename):
-                _files.append((filename, ""))
+                _files.append((Path(filename), ""))
             
             if os.path.isdir(filename):
                 for root, folders, inner_files in os.walk(filename):
@@ -218,7 +220,7 @@ class QuadrantRecon:
                         basename = os.path.basename(file).upper()
 
                         if (".JPG" in basename or ".JPEG" in basename) and not basename.startswith("."):
-                            _files.append((os.path.join(root, file), filename))
+                            _files.append((os.path.join(root, file), Path(filename)))
 
         # Filter input files
         for file, top_folder in tqdm(_files):
@@ -317,6 +319,9 @@ class QuadrantRecon:
 
                         # Add files together and store in cache
                         for file, img, img_blending in results:
+                            if not isinstance(img, np.ndarray):
+                                continue
+
                             np.add(blended_image, img_blending, out=blended_image)
 
                             original_images[file] = img
@@ -347,7 +352,7 @@ class QuadrantRecon:
 
                             self.log("Saving modified image...");
 
-                            cv2.imwrite(new_filename, image_cropped);
+                            imwrite(new_filename, image_cropped);
 
                             self.log("Writing metadata...")
 
@@ -407,7 +412,7 @@ class QuadrantRecon:
             self.log("Saving modified image...");
 
             image_cropped = cv2.cvtColor(image_cropped, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(new_filename, image_cropped);
+            imwrite(new_filename, image_cropped);
 
             self.log("Writing metadata...")
             
@@ -607,12 +612,18 @@ class QuadrantRecon:
 def _load_image_for_blending(file, blending_fraction, image_width, image_height):
     img = imread_correcting_rotation(file)
 
+    # Extra failsafe for images which couldnt be loaded properly
+    if not isinstance(img, np.ndarray):
+        print(f"WARNING: Skipping blending {file}: Couldnt load image.")
+
+        return (file, None, None)
+
     # Extra failsafe for rotated/weird images
     height, width = img.shape[:2]
     if (width, height) != (image_width, image_height):
         print(f"WARNING: Skipping blending {file}: This image has a resolution of {width}x{height} (Needed {image_width}x{image_height}).")
 
-        return
+        return (file, None, None)
 
     # Convert to uint8 after each blending pass, because if we use floats the range should be from 0.0 to 1.0
     return (file, img, np.ndarray.astype(img * blending_fraction, np.uint8))

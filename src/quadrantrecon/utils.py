@@ -39,7 +39,7 @@ class Result:
         return self
 
     def get_as_row(self):
-        return [self.failed, self.filename, self.process, self.current_block, self.error_reason]
+        return [self.failed, self.filename.encode("ascii", errors="ignore"), self.process, self.current_block, self.error_reason]
 
     def get_headers():
         return ["Failed", "Filename", "Process", "Execution Block", "Error"]
@@ -78,8 +78,7 @@ class StoreMultiConstAction(argparse.Action):
                  default=None,
                  required=False,
                  help=None,
-                 metavar=None,
-                 deprecated=False):
+                 metavar=None):
         super(StoreMultiConstAction, self).__init__(
             option_strings=option_strings,
             dest=dest,
@@ -87,8 +86,7 @@ class StoreMultiConstAction(argparse.Action):
             const=const,
             default=default,
             required=required,
-            help=help,
-            deprecated=deprecated)
+            help=help)
 
     def __call__(self, parser, namespace, values, option_string=None):
         for dst, const in self.const.items():
@@ -122,7 +120,7 @@ def get_opencv_colorspaces():
     }
 
 def imread_correcting_rotation(path):
-    img = cv2.imread(path)
+    img = cv2.imdecode(np.fromfile(path, np.uint8), flags=cv2.IMREAD_COLOR)
     metadata = piexif.load(path)
 
     if not piexif.ImageIFD.Orientation in metadata["0th"]:
@@ -151,3 +149,6 @@ def imread_correcting_rotation(path):
 
     return img
 
+def imwrite(new_filename, img):
+    img_encoded = np.array(cv2.imencode(".jpg", img)[1])
+    img_encoded.tofile(new_filename)
