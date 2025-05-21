@@ -4,7 +4,7 @@ import csv
 import multiprocessing
 import collections.abc
 
-from itertools import islice, chain, batched
+from more_itertools import batched
 from pathlib import Path
 from typing import List
 from math import sqrt
