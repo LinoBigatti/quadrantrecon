@@ -18,10 +18,6 @@ def main():
     options_group.add_argument("-v", "--verbose",
                         help="display debug information",
                         action="store_true")
-    options_group.add_argument("--csv-logging",
-                        help="store optional information about results in CSV logs (default: %(default)s)",
-                        action=argparse.BooleanOptionalAction,
-                        default=qr.csv_logging)
     options_group.add_argument("-p", "--plot",
                         help="plot results while working",
                         action="store_true")
@@ -31,8 +27,12 @@ def main():
     options_group.add_argument("--dry-run",
                         help="dont save images after cropping",
                         action="store_true")
+    options_group.add_argument("--csv-logging",
+                        help="store optional information about results in CSV logs",
+                        action=argparse.BooleanOptionalAction,
+                        default=qr.csv_logging)
     options_group.add_argument("--extra-metadata",
-                        help="retrieve and store optional metadata from the file paths (metadata retrieved, in order: climate/date/location/site/intertidal) (default: %(default)s)",
+                        help="retrieve and store optional metadata from the file paths (metadata retrieved, in order: climate/date/location/site/intertidal)",
                         action=argparse.BooleanOptionalAction,
                         default=qr.extra_metadata)
     options_group.add_argument("-j", "--threads",
