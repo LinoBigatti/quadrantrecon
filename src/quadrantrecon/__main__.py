@@ -18,6 +18,10 @@ def main():
     options_group.add_argument("-v", "--verbose",
                         help="display debug information",
                         action="store_true")
+    options_group.add_argument("--csv-logging",
+                        help="store optional information about results in CSV logs (default: %(default)s)",
+                        action=argparse.BooleanOptionalAction,
+                        default=qr.csv_logging)
     options_group.add_argument("-p", "--plot",
                         help="plot results while working",
                         action="store_true")

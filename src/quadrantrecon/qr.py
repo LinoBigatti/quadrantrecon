@@ -37,6 +37,7 @@ class QuadrantRecon:
         self.filename = []
         self.output_path = "./cropped_images/"
         self.verbose = False
+        self.csv_logging = True
         self.plot = False
         self.force = False
         self.dry_run = False
@@ -74,6 +75,13 @@ class QuadrantRecon:
 
         encoded_message = (message + "\n").encode("ascii", errors="ignore")
         self.log_file.write(encoded_message)
+
+    def write_csv(self, file, result: Result):
+        if self.csv_logging:
+            with open(file, "a", newline="") as f:
+                writer = csv.writer(f, delimiter = ";")
+
+                writer.writerow(result.get_as_row())
 
     def imread(self, path):
         return imread_correcting_rotation(path)
@@ -200,14 +208,24 @@ class QuadrantRecon:
 
         results = []
 
+        # Create output folder and log files
         os.makedirs(self.output_path, exist_ok=True)
-        log_table = os.path.join(self.output_path, "log.csv")
-        
-        if not os.path.exists(log_table):
-            with open(log_table, "w", newline="") as f:
-                writer = csv.writer(f, delimiter = ";")
 
-                writer.writerow(Result.get_headers())
+        log_table = os.path.join(self.output_path, "log.csv")
+        loading_log_table = os.path.join(self.output_path, "loading_log.csv")
+        
+        if self.csv_logging:
+            if not os.path.exists(log_table):
+                with open(log_table, "w", newline="") as f:
+                    writer = csv.writer(f, delimiter = ";")
+
+                    writer.writerow(Result.get_headers())
+
+            if not os.path.exists(loading_log_table):
+                with open(loading_log_table, "w", newline="") as f:
+                    writer = csv.writer(f, delimiter = ";")
+
+                    writer.writerow(Result.get_headers())
 
         # Collect filenames from all folders and subfolders listed in the arguments
         for filename in self.filename:
@@ -230,7 +248,7 @@ class QuadrantRecon:
             new_filename = self.get_new_filename(file, top_folder)
             relative_path = os.path.dirname(file)
             
-            skip_file = False
+            result = Result(file).Ok()
 
             metadata = piexif.load(file)
 
@@ -238,29 +256,30 @@ class QuadrantRecon:
 
             # Prevent running quadrantrecon on unrecognized images
             if width != self.image_width or height != self.image_height:
-                self.log(f"Skipping {file}: This image has a resolution of {width}x{height} (Needed {self.image_width}x{self.image_height}).")
+                result = Result(file).Err("skipped", "incorrect_size", f"this image has a resolution of {width}x{height} (Needed {self.image_width}x{self.image_height})")
 
-                skip_file = True
+                self.log(f"Skipping {file}: This image has a resolution of {width}x{height} (Needed {self.image_width}x{self.image_height}).")
             
             # Prevent running quadrantrecon over already modified images
             try:
                 user_comment = piexif.helper.UserComment.load(metadata["Exif"][piexif.ExifIFD.UserComment])
 
                 if "_quadrantrecon_marker" in user_comment and not self.force:
-                    self.log(f"Skipping {file}: This image has already been modified by quadrantrecon.")
+                    result = Result(file).Err("skipped", "marker_present", "this image has already been modified by quadrantrecon")
 
-                    skip_file = True
+                    self.log(f"Skipping {file}: This image has already been modified by quadrantrecon.")
             except Exception as e:
                 pass
-                #self.log(f"Exception loading user comment from file {file}: {e}")
 
             # Prevent re-running quadrantrecon on already processed images
             if os.path.isfile(new_filename) and not self.force:
+                result = Result(file).Err("skipped", "output_exists", "output file already exists. Use --force to process it anyways")
+
                 self.log(f"Skipping {new_filename}: The output file already exists. Use --force to process it anyways.")
 
-                skip_file = True
+            self.write_csv(loading_log_table, result)
 
-            if not skip_file:
+            if result.is_ok():
                 if is_individual_file:
                     individual_files.append((file, top_folder))
                 else:
@@ -282,10 +301,7 @@ class QuadrantRecon:
             finally:
                 results.append(result)
 
-                with open(os.path.join(self.output_path, "log.csv"), "a", newline="") as f:
-                    writer = csv.writer(f, delimiter = ";")
-
-                    writer.writerow(result.get_as_row())
+                self.write_csv(log_table, result)
 
         if not files:
             return results
@@ -362,13 +378,12 @@ class QuadrantRecon:
                     
                     self.log(f"Encountered an error while processing file {file}: {e}")
                 finally:
-                    results.append(result)
+                    for file, _, in batched_files:
+                        r = Result().copy_from(result)
+                        r.filename = file
 
-                    with open(os.path.join(self.output_path, "log.csv"), "a", newline="") as f:
-                        writer = csv.writer(f, delimiter = ";")
-
-                        writer.writerow(result.get_as_row())
-
+                        results.append(r)
+                        self.write_csv(log_table, r)
 
         return results
 

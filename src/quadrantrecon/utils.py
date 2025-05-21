@@ -38,6 +38,12 @@ class Result:
 
         return self
 
+    def is_ok(self) -> bool:
+        return not self.failed
+
+    def is_err(self) -> bool:
+        return not self.failed
+
     def get_as_row(self):
         return [self.failed, self.filename.encode("ascii", errors="ignore"), self.process, self.current_block, self.error_reason]
 
